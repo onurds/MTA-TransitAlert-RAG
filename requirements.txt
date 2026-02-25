@@ -1,0 +1,26 @@
+# MTA Transit Alert RAG - Dependencies
+# Install with: pip install -r requirements.txt
+
+# --- Core Graph & Data ---
+networkx>=3.2
+pydantic>=2.0
+
+# --- LangChain (Graph Retrieval Pipeline) ---
+langchain>=0.2
+langchain-openai>=0.1
+langchain-core>=0.2
+
+# --- DSPy (Prompt Optimization) ---
+dspy-ai>=2.4
+
+# --- vLLM-served Qwen3 (on RunPod) ---
+# Run separately on the pod: vllm serve Qwen/Qwen3-30B-A3B --port 8000
+# vllm>=0.4  # Install on RunPod only, not needed locally
+
+# --- API Server ---
+fastapi>=0.111
+uvicorn[standard]>=0.29
+
+# --- Utilities ---
+requests>=2.31
+python-dotenv>=1.0
