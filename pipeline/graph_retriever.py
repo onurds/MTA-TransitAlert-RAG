@@ -12,15 +12,15 @@ from langchain_core.output_parsers import PydanticOutputParser
 # ---------------------------------------------------------------------------
 # vLLM Configuration
 # ---------------------------------------------------------------------------
-# Once the RunPod instance is running and vLLM is serving Qwen3, set:
+# Once the RunPod instance is running and vLLM is serving Qwen3.5-35B-A3B, set:
 #   export VLLM_BASE_URL="http://<your-runpod-pod-id>-8000.proxy.runpod.net/v1"
-#   export VLLM_MODEL_NAME="Qwen/Qwen3-30B-A3B"   # or whichever tag you pulled
+#   export VLLM_MODEL_NAME="Qwen/Qwen3.5-35B-A3B"
 #
 # The LangChain ChatOpenAI wrapper is fully compatible with vLLM's OpenAI-
 # compatible endpoint -- no API key is required, we pass a dummy string.
 # ---------------------------------------------------------------------------
 VLLM_BASE_URL  = os.environ.get("VLLM_BASE_URL",  "http://localhost:8000/v1")
-VLLM_MODEL_NAME = os.environ.get("VLLM_MODEL_NAME", "Qwen/Qwen3-30B-A3B")
+VLLM_MODEL_NAME = os.environ.get("VLLM_MODEL_NAME", "Qwen/Qwen3.5-35B-A3B")
 
 # -----
 # Models
@@ -51,7 +51,7 @@ class GraphRetriever:
             print(f"Error loading graph: {e}. Please ensure build_knowledge_graph.py has been run.")
             self.G = nx.DiGraph()
 
-        # Connect to the vLLM-served Qwen3 model running locally on RunPod.
+        # Connect to the vLLM-served Qwen3.5-35B-A3B model running locally on RunPod.
         # ChatOpenAI with base_url is fully compatible with vLLM's OpenAI API.
         self.llm = ChatOpenAI(
             model=VLLM_MODEL_NAME,
@@ -296,9 +296,9 @@ if __name__ == "__main__":
     vllm_url = os.environ.get("VLLM_BASE_URL")
     if not vllm_url or vllm_url == "http://localhost:8000/v1":
         print("\nSkipping live LLM test: VLLM_BASE_URL is not set to a RunPod endpoint.")
-        print("To run the full pipeline once Qwen3 is downloaded and vLLM is running:")
+        print("To run the full pipeline once Qwen3.5-35B-A3B is downloaded and vLLM is running:")
         print("  export VLLM_BASE_URL=\"http://<pod-id>-8000.proxy.runpod.net/v1\"")
-        print("  export VLLM_MODEL_NAME=\"Qwen/Qwen3-30B-A3B\"")
+        print("  export VLLM_MODEL_NAME=\"Qwen/Qwen3.5-35B-A3B\"")
         print("  python3 graph_retriever.py")
     else:
         print(f"\nConnecting to vLLM at {VLLM_BASE_URL} (model: {VLLM_MODEL_NAME})...")

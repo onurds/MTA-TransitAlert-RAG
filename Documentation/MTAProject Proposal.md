@@ -76,7 +76,7 @@ The system leverages the semantic power of graph traversal to eliminate station 
 Module 3: Constraint Extraction and Optimization (The Reasoner)
 
 This is the core intelligence layer. It utilizes a Small Language Model (SLM) to parse logic without generating free text.
-- **Model:** **Qwen 3 30B Instruct** (via vLLM) exposed as a stateless API endpoint.
+- **Model:** **Qwen3.5-35B-A3B** (via vLLM) exposed as a stateless API endpoint.
 - **Strict Schema Enforcement:** Output is heavily constrained using formal Pydantic models (e.g., `outlines` or `guidance`). The prompt itself is structurally distributed through these Schema definitions to enforce MTA-specific formatting rules (such as dual translations for `en` and `en-html` and precise Mercury extensions), eliminating structural hallucinations.
 - **Neuro-Symbolic Calibration (DSPy):** Because historical MTA data leaves `Cause` and `Effect` as `"UNKNOWN"`, our optimization layer focuses strictly on calibrating the extraction of verifiable GTFS fields (`informed_entities` and `active_periods`):
   - A "Golden Set" is derived directly from historical alerts (`mta_alerts.json`), pairing raw operator text with ground-truth physical entity and temporal outputs.
@@ -99,7 +99,7 @@ The system functions asynchronously as a stateless API for the CMS.
 
 This project shares the infrastructure of the concurrent thesis work to maximize resource efficiency.
 - **Orchestration:** **LangChain**, utilizing dynamic routing and tool binding to execute Graph search capabilities with Google Maps API fallback functions.
-- **Inference Engine:** **vLLM** serving **Qwen 3 30B Instruct**, constrained by **outlines**.
+- **Inference Engine:** **vLLM** serving **Qwen3.5-35B-A3B**, constrained by **outlines**.
 - **Optimization Layer:** **DSPy** for automated prompt optimization and enum assignment calibration.
 - **Graph Engine:** **NetworkX** (or equivalent lightweight library) for loading and traversing the deterministic GTFS knowledge graph.
 - **Backend:** **Python** with **FastAPI** for stateless API design.

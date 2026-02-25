@@ -24,7 +24,7 @@ We are utilizing a **Graph-RAG + Extraction Pipeline** paradigm. This architectu
 We use LangChain as the operational engine, wired using LightRAG's semantic blueprint: **Dual-Level Graph Retrieval**. LangGraph stateful `interrupt_before` HITL checkpoints were considered and **abandoned** in favour of a simpler stateless API architecture: the pipeline generates JSON, serves it to the CMS, and if the operator requests a change, the API re-runs statelessly with the chat history appended.
 
 ### Inference Stack
-*   **Model:** Qwen3-30B-A3B served via **vLLM** on a RunPod A100 80GB instance.
+*   **Model:** Qwen3.5-35B-A3B served via **vLLM** on a RunPod A100 80GB instance.
 *   **Connection:** LangChain's `ChatOpenAI` wrapper pointed at `VLLM_BASE_URL` (the OpenAI-compatible `/v1` endpoint). No API key required.
 *   **Schema Enforcement:** Pydantic models (`InformedEntity`, `ActivePeriod`, `GTFSAlertPayload`) define the output contract. `outlines` or `guidance` physically constrains LLM token generation to guarantee zero structural hallucinations.
 
@@ -56,7 +56,7 @@ We use LangChain as the operational engine, wired using LightRAG's semantic blue
 *   **Metric:** Route-ID F1 score over `informed_entities_json`. Cause/Effect deliberately excluded (all `UNKNOWN` in gold set).
 *   **Optimizer:** `BootstrapFewShotWithRandomSearch` with `max_bootstrapped_demos=4`, `num_candidate_programs=8`, `num_threads=1` (single vLLM instance).
 *   **Output:** `compiled_alert_extractor.json` — the optimized few-shot program, loadable without re-running the optimizer.
-*   **⚠️ Requires RunPod:** Optimizer execution needs vLLM serving Qwen3. All scaffolding is ready; run `python3 dspy_optimizer.py` after setting `VLLM_BASE_URL`.
+*   **⚠️ Requires RunPod:** Optimizer execution needs vLLM serving Qwen3.5-35B-A3B. All scaffolding is ready; run `python3 pipeline/dspy_optimizer.py` after setting `VLLM_BASE_URL`.
 
 ### Module 4: FastAPI Delivery (Planned)
 *   Stateless `/extract` endpoint wrapping Modules 2 + 3.
@@ -118,5 +118,5 @@ python3 tests/test_knowledge_graph.py
 *   ✅ **Phase 3 Scaffolded:** `dspy_optimizer.py` — offline schema + metric tests passed. Awaits RunPod.
 
 **TODO (Next Steps):**
-1. **Run DSPy Optimizer (RunPod):** `vllm serve Qwen/Qwen3-30B-A3B` → `python3 dspy_optimizer.py` → produces `compiled_alert_extractor.json`.
+1. **Run DSPy Optimizer (RunPod):** `vllm serve Qwen/Qwen3.5-35B-A3B` → `python3 pipeline/dspy_optimizer.py` → produces `data/compiled_alert_extractor.json`.
 2. **Phase 4 — FastAPI Endpoint:** Wrap Graph Retriever + Compiled DSPy Program in a stateless FastAPI service (`main.py`).

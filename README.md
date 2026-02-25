@@ -50,7 +50,7 @@ For live model-backed execution (`graph_retriever.py` and `dspy_optimizer.py`):
 
 ```bash
 export VLLM_BASE_URL="http://<pod-id>-8000.proxy.runpod.net/v1"
-export VLLM_MODEL_NAME="Qwen/Qwen3-30B-A3B"
+export VLLM_MODEL_NAME="Qwen/Qwen3.5-35B-A3B"
 ```
 
 Optional variables used in `pipeline/dspy_optimizer.py`:

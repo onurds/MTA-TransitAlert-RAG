@@ -3,9 +3,9 @@ dspy_optimizer.py
 =================
 Phase 3: DSPy Prompt Optimization for the MTA Transit Alert RAG pipeline.
 
-REQUIRES: vLLM running Qwen3 on RunPod.
+REQUIRES: vLLM running Qwen3.5-35B-A3B on RunPod.
   export VLLM_BASE_URL="http://<pod-id>-8000.proxy.runpod.net/v1"
-  export VLLM_MODEL_NAME="Qwen/Qwen3-30B-A3B"
+  export VLLM_MODEL_NAME="Qwen/Qwen3.5-35B-A3B"
 
 Run:
   python3 dspy_optimizer.py
@@ -25,7 +25,7 @@ import dspy
 # vLLM Configuration
 # ---------------------------------------------------------------------------
 VLLM_BASE_URL   = os.environ.get("VLLM_BASE_URL",   "http://localhost:8000/v1")
-VLLM_MODEL_NAME = os.environ.get("VLLM_MODEL_NAME",  "Qwen/Qwen3-30B-A3B")
+VLLM_MODEL_NAME = os.environ.get("VLLM_MODEL_NAME",  "Qwen/Qwen3.5-35B-A3B")
 GOLDEN_SET_PATH = os.environ.get("GOLDEN_SET_PATH",  "data/golden_annotations.jsonl")
 COMPILED_OUTPUT = os.environ.get("COMPILED_OUTPUT",  "data/compiled_alert_extractor.json")
 
@@ -187,7 +187,7 @@ def run_optimization(trainset, devset):
     program = AlertExtractor()
 
     print("\n--- Running BootstrapFewShotWithRandomSearch ---")
-    print("(This will take several minutes — each candidate requires forward passes through Qwen3)")
+    print("(This will take several minutes — each candidate requires forward passes through Qwen3.5-35B-A3B)")
     teleprompter = dspy.BootstrapFewShotWithRandomSearch(
         metric=gtfs_metric,
         max_bootstrapped_demos=4,     # Up to 4 few-shot examples injected into the prompt
@@ -278,9 +278,9 @@ if __name__ == "__main__":
     vllm_url = os.environ.get("VLLM_BASE_URL")
     if not vllm_url or vllm_url == "http://localhost:8000/v1":
         print("\n⚠️  VLLM_BASE_URL is not set to a RunPod endpoint.")
-        print("Skipping optimizer run. Once Qwen3 is downloaded and vLLM is running:")
+        print("Skipping optimizer run. Once Qwen3.5-35B-A3B is downloaded and vLLM is running:")
         print("  export VLLM_BASE_URL=\"http://<pod-id>-8000.proxy.runpod.net/v1\"")
-        print("  export VLLM_MODEL_NAME=\"Qwen/Qwen3-30B-A3B\"")
+        print("  export VLLM_MODEL_NAME=\"Qwen/Qwen3.5-35B-A3B\"")
         print("  python3 dspy_optimizer.py")
     else:
         # Step 3: Run and save the compiled prompt program

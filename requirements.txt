@@ -13,8 +13,8 @@ langchain-core>=0.2
 # --- DSPy (Prompt Optimization) ---
 dspy-ai>=2.4
 
-# --- vLLM-served Qwen3 (on RunPod) ---
-# Run separately on the pod: vllm serve Qwen/Qwen3-30B-A3B --port 8000
+# --- vLLM-served Qwen3.5-35B-A3B (on RunPod) ---
+# Run separately on the pod: vllm serve Qwen/Qwen3.5-35B-A3B --port 8000
 # vllm>=0.4  # Install on RunPod only, not needed locally
 
 # --- API Server ---
