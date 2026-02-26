@@ -1,9 +1,11 @@
 import os
 import pickle
 import networkx as nx
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from pydantic import BaseModel, Field
 import json
+import numpy as np
+from scipy.spatial import KDTree
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -21,6 +23,10 @@ from langchain_core.output_parsers import PydanticOutputParser
 # ---------------------------------------------------------------------------
 VLLM_BASE_URL  = os.environ.get("VLLM_BASE_URL",  "http://localhost:8000/v1")
 VLLM_MODEL_NAME = os.environ.get("VLLM_MODEL_NAME", "Qwen/Qwen3.5-35B-A3B")
+
+# Path where the Google Maps API key is stored (persists on /workspace across reboots).
+# Falls back to GOOGLE_MAPS_API_KEY env var if the file is absent.
+GMAPS_API_KEY_FILE = "/workspace/.vscode/.gmaps_api"
 
 # -----
 # Models
@@ -80,28 +86,89 @@ class GraphRetriever:
         
         return ""
 
+    def _load_gmaps_api_key(self) -> Optional[str]:
+        """Load the Google Maps API key from the key file, falling back to env var."""
+        if os.path.isfile(GMAPS_API_KEY_FILE):
+            with open(GMAPS_API_KEY_FILE, "r") as f:
+                key = f.read().strip()
+            if key:
+                return key
+        # Fallback: honour the conventional env var
+        return os.environ.get("GOOGLE_MAPS_API_KEY")
+
+    def _build_stop_kdtree(self) -> Tuple[KDTree, List[str]]:
+        """
+        Build a KD-Tree over all Stop nodes in the graph that carry lat/lng attributes.
+        Returns (tree, ordered_list_of_node_ids) so we can map tree indices back to stop_ids.
+        """
+        coords, node_ids = [], []
+        for node, attrs in self.G.nodes(data=True):
+            if attrs.get("type") == "Stop":
+                lat = attrs.get("stop_lat")
+                lon = attrs.get("stop_lon")
+                if lat is not None and lon is not None:
+                    coords.append([float(lat), float(lon)])
+                    node_ids.append(node)
+        if not coords:
+            raise ValueError("No Stop nodes with lat/lng found in graph.")
+        return KDTree(np.array(coords)), node_ids
+
     def _geocoding_fallback(self, location_text: str) -> Optional[str]:
         """
-        Google Maps Geocoding API fallback. Called when graph traversal returns zero candidates.
-        Returns the nearest stop_id from the graph for the resolved coordinates, or None.
-        
-        NOTE: This is a STUB for Phase 2. Full implementation requires:
-          - GOOGLE_MAPS_API_KEY set in environment.
-          - pip install googlemaps
-          - Match resolved lat/lng to nearest stop node (e.g., via KD-Tree over stop lat/lng attributes).
+        Google Maps Geocoding API fallback.
+        Called when graph traversal returns zero candidates (e.g. severe operator
+        typos or novel landmarks).  Resolves the location text to lat/lng via the
+        Google Maps Geocoding API, then finds the nearest Stop node in the graph
+        using a KD-Tree.  Returns the stop_id of the nearest stop, or None on failure.
+
+        API key is read from GMAPS_API_KEY_FILE (/workspace/.vscode/.gmaps_api)
+        with a fallback to the GOOGLE_MAPS_API_KEY environment variable.
         """
-        google_api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
-        if not google_api_key:
-            print("[Fallback] GOOGLE_MAPS_API_KEY not set. Cannot perform geocoding fallback.")
+        try:
+            import googlemaps  # noqa: PLC0415 — optional dependency
+        except ImportError:
+            print("[Fallback] 'googlemaps' package not installed. Run: pip install googlemaps")
             return None
-        
-        # Stub: real implementation would do:
-        # import googlemaps
-        # gmaps = googlemaps.Client(key=google_api_key)
-        # result = gmaps.geocode(f"{location_text}, New York City")
-        # Then nearest-neighbor match to stop lat/lng in self.G.
-        print(f"[Fallback] Would geocode: '{location_text}' via Google Maps API.")
-        return None
+
+        api_key = self._load_gmaps_api_key()
+        if not api_key:
+            print(
+                "[Fallback] No Google Maps API key found. "
+                f"Add your key to {GMAPS_API_KEY_FILE} or set GOOGLE_MAPS_API_KEY."
+            )
+            return None
+
+        print(f"[Fallback] Geocoding '{location_text}' via Google Maps API...")
+        try:
+            gmaps = googlemaps.Client(key=api_key)
+            results = gmaps.geocode(f"{location_text}, New York City")
+        except Exception as e:
+            print(f"[Fallback] Geocoding API error: {e}")
+            return None
+
+        if not results:
+            print(f"[Fallback] No geocoding results for '{location_text}'.")
+            return None
+
+        location = results[0]["geometry"]["location"]
+        query_lat, query_lon = location["lat"], location["lng"]
+        print(f"[Fallback] Resolved to ({query_lat:.5f}, {query_lon:.5f}).")
+
+        # Find the nearest Stop node in the graph using the KD-Tree.
+        try:
+            tree, node_ids = self._build_stop_kdtree()
+        except ValueError as e:
+            print(f"[Fallback] KD-Tree build failed: {e}")
+            return None
+
+        distance, idx = tree.query([query_lat, query_lon])
+        nearest_stop_id = node_ids[idx]
+        nearest_name = self.G.nodes[nearest_stop_id].get("name", "?")
+        print(
+            f"[Fallback] Nearest stop: '{nearest_name}' ({nearest_stop_id}), "
+            f"~{distance * 111_000:.0f} m from resolved coordinates."
+        )
+        return nearest_stop_id
 
     def retrieve_affected_entities(self, alert_text: str) -> Dict[str, Any]:
         """

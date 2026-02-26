@@ -28,6 +28,15 @@ VLLM_BASE_URL   = os.environ.get("VLLM_BASE_URL",   "http://localhost:8000/v1")
 VLLM_MODEL_NAME = os.environ.get("VLLM_MODEL_NAME",  "Qwen/Qwen3.5-35B-A3B")
 GOLDEN_SET_PATH = os.environ.get("GOLDEN_SET_PATH",  "data/golden_annotations.jsonl")
 COMPILED_OUTPUT = os.environ.get("COMPILED_OUTPUT",  "data/compiled_alert_extractor.json")
+DSPY_MAX_TOKENS = int(os.environ.get("DSPY_MAX_TOKENS", "512"))
+DSPY_USE_COT = os.environ.get("DSPY_USE_COT", "0").lower() in {"1", "true", "yes"}
+DSPY_MAX_BOOTSTRAPPED_DEMOS = int(os.environ.get("DSPY_MAX_BOOTSTRAPPED_DEMOS", "4"))
+DSPY_MAX_LABELED_DEMOS = int(os.environ.get("DSPY_MAX_LABELED_DEMOS", "8"))
+DSPY_NUM_CANDIDATE_PROGRAMS = int(os.environ.get("DSPY_NUM_CANDIDATE_PROGRAMS", "2"))
+DSPY_NUM_THREADS = int(os.environ.get("DSPY_NUM_THREADS", "1"))
+DSPY_DEV_EVAL_LIMIT = int(os.environ.get("DSPY_DEV_EVAL_LIMIT", "0"))
+DSPY_TRAINSET_LIMIT = int(os.environ.get("DSPY_TRAINSET_LIMIT", "0"))
+DSPY_VALSET_LIMIT = int(os.environ.get("DSPY_VALSET_LIMIT", "0"))
 
 # ---------------------------------------------------------------------------
 # Pydantic GTFS-RT Schema (MTA Mercury Extensions)
@@ -87,7 +96,8 @@ class AlertToPayload(dspy.Signature):
 
 class AlertExtractor(dspy.Module):
     def __init__(self):
-        self.predictor = dspy.ChainOfThought(AlertToPayload)
+        # CoT can cause long rambling outputs with local models; allow runtime toggle.
+        self.predictor = dspy.ChainOfThought(AlertToPayload) if DSPY_USE_COT else dspy.Predict(AlertToPayload)
 
     def forward(self, header: str, description: str):
         return self.predictor(header=header, description=description)
@@ -117,6 +127,10 @@ def load_golden_dataset(path: str, train_ratio: float = 0.8):
     split = int(len(examples) * train_ratio)
     trainset = examples[:split]
     devset   = examples[split:]
+    if DSPY_TRAINSET_LIMIT > 0:
+        trainset = trainset[:DSPY_TRAINSET_LIMIT]
+    if DSPY_VALSET_LIMIT > 0:
+        devset = devset[:DSPY_VALSET_LIMIT]
     print(f"Dataset loaded: {len(trainset)} train / {len(devset)} dev examples.")
     return trainset, devset
 
@@ -179,10 +193,18 @@ def run_optimization(trainset, devset):
         base_url=VLLM_BASE_URL,
         api_key="not-needed",
         temperature=0.0,
-        max_tokens=1024,
+        max_tokens=DSPY_MAX_TOKENS,
     )
     dspy.configure(lm=lm)
     print(f"LM configured: {VLLM_MODEL_NAME} at {VLLM_BASE_URL}")
+    print(
+        "DSPy runtime config: "
+        f"USE_COT={DSPY_USE_COT}, MAX_TOKENS={DSPY_MAX_TOKENS}, "
+        f"NUM_CANDIDATE_PROGRAMS={DSPY_NUM_CANDIDATE_PROGRAMS}, "
+        f"MAX_BOOTSTRAPPED_DEMOS={DSPY_MAX_BOOTSTRAPPED_DEMOS}, "
+        f"MAX_LABELED_DEMOS={DSPY_MAX_LABELED_DEMOS}, "
+        f"NUM_THREADS={DSPY_NUM_THREADS}"
+    )
 
     program = AlertExtractor()
 
@@ -190,10 +212,10 @@ def run_optimization(trainset, devset):
     print("(This will take several minutes — each candidate requires forward passes through Qwen3.5-35B-A3B)")
     teleprompter = dspy.BootstrapFewShotWithRandomSearch(
         metric=gtfs_metric,
-        max_bootstrapped_demos=4,     # Up to 4 few-shot examples injected into the prompt
-        max_labeled_demos=8,          # Pool to sample from
-        num_candidate_programs=8,     # Number of random prompt variants to evaluate
-        num_threads=1,                # Keep at 1 for a single vLLM instance
+        max_bootstrapped_demos=DSPY_MAX_BOOTSTRAPPED_DEMOS,
+        max_labeled_demos=DSPY_MAX_LABELED_DEMOS,
+        num_candidate_programs=DSPY_NUM_CANDIDATE_PROGRAMS,
+        num_threads=DSPY_NUM_THREADS,
     )
 
     compiled_program = teleprompter.compile(program, trainset=trainset, valset=devset)
@@ -205,11 +227,14 @@ def run_optimization(trainset, devset):
 
 def evaluate(program, devset):
     """Evaluate a compiled program against the devset and print a summary."""
+    if DSPY_DEV_EVAL_LIMIT > 0:
+        devset = devset[:DSPY_DEV_EVAL_LIMIT]
+        print(f"\nDev eval limited to first {len(devset)} examples (DSPY_DEV_EVAL_LIMIT).")
     print(f"\n--- Evaluating on {len(devset)} dev examples ---")
     evaluator = dspy.Evaluate(
         devset=devset,
         metric=gtfs_metric,
-        num_threads=1,
+        num_threads=DSPY_NUM_THREADS,
         display_progress=True,
         display_table=5,
     )
