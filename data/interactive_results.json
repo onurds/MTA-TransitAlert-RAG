@@ -1,0 +1,608 @@
+[
+  {
+    "timestamp_utc": "2026-02-28T11:44:26.677796+00:00",
+    "instruction": "Southbound BxM2 and BxM3 buses are detoured due to utility work at Madison Ave and E 96th St. dates are from 07:15 AM to 09:45 AM today",
+    "response": {
+      "id": "lmm:generated:88218feba18a",
+      "header": "Southbound BxM2 and BxM3 buses are detoured due to utility work at Madison Ave and E 96th St. dates are from 07:15 AM to 09:45 AM today",
+      "description": "Southbound BxM2 and BxM3 buses are detoured due to utility work at Madison Ave and E 96th St. dates are from 07:15 AM to 09:45 AM today",
+      "effect": "DETOUR",
+      "cause": "MAINTENANCE",
+      "active_periods": [
+        {
+          "start": "2026-02-28T07:15:00",
+          "end": "2026-02-28T09:45:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM2"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM3"
+        }
+      ],
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-02-28T11:56:50.886044+00:00",
+    "instruction": "Southbound BxM2 and BxM3 buses are detoured due to utility work at Madison Ave and E 96th St. dates are from 07:15 AM to 09:45 AM today",
+    "response": {
+      "id": "lmm:generated:57e2f1204f0b",
+      "header": "Southbound [BxM2] and [BxM3] buses are detoured due to utility work at Madison Ave and E 96th St.",
+      "description": "Southbound [BxM2] and [BxM3] buses are detoured due to utility work at Madison Ave and E 96th St.",
+      "effect": "DETOUR",
+      "cause": "MAINTENANCE",
+      "active_periods": [
+        {
+          "start": "2026-02-28T07:15:00",
+          "end": "2026-02-28T09:45:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM2"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM3"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM2",
+          "stop_id": "450543"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM2",
+          "stop_id": "981050"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM3",
+          "stop_id": "404168"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM3",
+          "stop_id": "450457"
+        }
+      ],
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-02-28T12:07:09.692317+00:00",
+    "instruction": "Southbound BxM2 and BxM3 buses are detoured due to utility work at Madison Ave and E 96th St. dates are from 07:15 AM to 09:45 AM today",
+    "response": {
+      "id": "lmm:generated:5cfb180ba1c1",
+      "header": "Southbound [BxM2] and [BxM3] buses are detoured due to utility work at Madison Ave and E 96th St.",
+      "description": "Southbound [BxM2] and [BxM3] buses are detoured due to utility work at Madison Ave and E 96th St.",
+      "effect": "DETOUR",
+      "cause": "MAINTENANCE",
+      "active_periods": [
+        {
+          "start": "2026-02-28T07:15:00",
+          "end": "2026-02-28T09:45:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM2"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM3"
+        }
+      ],
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-02-28T13:54:43.843098+00:00",
+    "instruction": "Southbound BxM2 and BxM3 buses are detoured due to utility work at Madison Ave and E 96th St. dates are from 07:15 AM to 09:45 AM today",
+    "response": {
+      "id": "lmm:generated:c5bf250e3e22",
+      "header": "Southbound [BxM2] and [BxM3] buses are detoured due to utility work at Madison Ave and E 96th St.",
+      "description": "Southbound [BxM2] and [BxM3] buses are detoured due to utility work at Madison Ave and E 96th St.",
+      "effect": "DETOUR",
+      "cause": "MAINTENANCE",
+      "active_periods": [
+        {
+          "start": "2026-02-28T07:15:00",
+          "end": "2026-02-28T09:45:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM2"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM3"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "404168"
+        }
+      ],
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-02-28T13:56:11.834736+00:00",
+    "instruction": "No [E] trains between Kew Gardens-Union Tpke and Jamaica Center-Parsons/Archer.\\nThe last stop for some uptown [E] trains will be 179 St [F] line or Queens Plaza. dates are tomorrow at 7PM to 9PM",
+    "response": {
+      "id": "lmm:generated:5fd41a5147af",
+      "header": "No [E] trains between Kew Gardens-Union Tpke and Jamaica Center-Parsons/Archer.\\nThe last stop for some uptown [E] trains will be 179 St [F] line or Queens Plaz",
+      "description": "No [E] trains between Kew Gardens-Union Tpke and Jamaica Center-Parsons/Archer.\\nThe last stop for some uptown [E] trains will be 179 St [F] line or Queens Plaza.",
+      "effect": "UNKNOWN_EFFECT",
+      "cause": "UNKNOWN_CAUSE",
+      "active_periods": [
+        {
+          "start": "2026-03-01T00:00:00",
+          "end": "2026-03-02T00:00:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "E"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "F"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "G05S"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "F06S"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "F06N"
+        }
+      ],
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-02-28T14:00:03.220914+00:00",
+    "instruction": "\"header\": \"Downtown [1] trains are running with delays after we addressed a door problem on a train at Cathedral Pkwy-110 St.\",",
+    "response": {
+      "id": "lmm:generated:1d475ee97f4b",
+      "header": "\"header\": \"Downtown [1] trains are running with delays after we addressed [a] door problem on [a] train at Cathedral Pkwy-110 St.\"",
+      "description": "\"header\": \"Downtown [1] trains are running with delays after we addressed [a] door problem on [a] train at Cathedral Pkwy-110 St.\"",
+      "effect": "SIGNIFICANT_DELAYS",
+      "cause": "UNKNOWN_CAUSE",
+      "active_periods": [
+        {
+          "start": "2026-02-28T09:00:03"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "1"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "A"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "118S"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "118N"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "A17S"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "A17N"
+        }
+      ],
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-02-28T14:00:04.893286+00:00",
+    "instruction": "\"header\": \"Downtown [1] trains are running with delays after we addressed a door problem on a train at Cathedral Pkwy-110 St.\",",
+    "response": {
+      "id": "lmm:generated:dff23370063b",
+      "header": "\"header\": \"Downtown [1] trains are running with delays after we addressed [a] door problem on [a] train at Cathedral Pkwy-110 St.\"",
+      "description": "\"header\": \"Downtown [1] trains are running with delays after we addressed [a] door problem on [a] train at Cathedral Pkwy-110 St.\"",
+      "effect": "SIGNIFICANT_DELAYS",
+      "cause": "UNKNOWN_CAUSE",
+      "active_periods": [
+        {
+          "start": "2026-02-28T09:00:04"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "1"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "A"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "118S"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "118N"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "A17S"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "A17N"
+        }
+      ],
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-02-28T14:00:05.857645+00:00",
+    "instruction": "\"header\": \"Downtown [1] trains are running with delays after we addressed a door problem on a train at Cathedral Pkwy-110 St.\",",
+    "response": {
+      "id": "lmm:generated:1de85fe7894c",
+      "header": "\"header\": \"Downtown [1] trains are running with delays after we addressed [a] door problem on [a] train at Cathedral Pkwy-110 St.\"",
+      "description": "\"header\": \"Downtown [1] trains are running with delays after we addressed [a] door problem on [a] train at Cathedral Pkwy-110 St.\"",
+      "effect": "SIGNIFICANT_DELAYS",
+      "cause": "UNKNOWN_CAUSE",
+      "active_periods": [
+        {
+          "start": "2026-02-28T09:00:05"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "1"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "A"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "118S"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "118N"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "A17S"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "A17N"
+        }
+      ],
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-02-28T14:00:41.119184+00:00",
+    "instruction": "Downtown [1] trains are running with delays after we addressed a door problem on a train at Cathedral Pkwy-110 St. Dates are tomorrow from 7 PM to 11 PM.",
+    "response": {
+      "id": "lmm:generated:0ef73a4309d3",
+      "header": "Downtown [1] trains are running with delays after we addressed [a] door problem on [a] train at Cathedral Pkwy-110 St.",
+      "description": "Downtown [1] trains are running with delays after we addressed [a] door problem on [a] train at Cathedral Pkwy-110 St.",
+      "effect": "SIGNIFICANT_DELAYS",
+      "cause": "UNKNOWN_CAUSE",
+      "active_periods": [
+        {
+          "start": "2026-03-01T19:00:00",
+          "end": "2026-03-01T23:00:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "1"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "A"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "118S"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "118N"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "A17S"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "A17N"
+        }
+      ],
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-02-28T14:06:38.957407+00:00",
+    "instruction": "Broad St-bound [J] trains are running with delays while we address a signal malfunction near Crescent St. dates: timestamp now as start no end date.",
+    "response": {
+      "id": "lmm:generated:e1f1167993ff",
+      "header": "Broad St-bound [J] trains are running with delays while we address a signal malfunction near Crescent St. dates: timestamp now as start no end date.",
+      "description": "Broad St-bound [J] trains are running with delays while we address a signal malfunction near Crescent St. dates: timestamp now as start no end date.",
+      "effect": "SIGNIFICANT_DELAYS",
+      "cause": "UNKNOWN_CAUSE",
+      "active_periods": [
+        {
+          "start": "2026-02-28T09:06:38"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "J"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "J20"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "M23"
+        }
+      ],
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-02-28T14:30:40.344259+00:00",
+    "instruction": "Broad St-bound [J] trains are running with delays while we address a signal malfunction near Crescent St. dates: timestamp now as start no end date.",
+    "response": {
+      "id": "lmm:generated:81dc71eff4d7",
+      "header": "Broad St-bound [J] trains are running with delays while we address a signal malfunction near Crescent St.",
+      "description": "Broad St-bound [J] trains are running with delays while we address a signal malfunction near Crescent St.",
+      "effect": "SIGNIFICANT_DELAYS",
+      "cause": "TECHNICAL_PROBLEM",
+      "active_periods": [
+        {
+          "start": "2026-02-28T09:29:54"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "J"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "J20"
+        }
+      ],
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T14:06:22.454731+00:00",
+    "instruction": "Broad St-bound [J] trains are running with delays while we address a signal malfunction near Crescent St. dates: timestamp now as start no end date.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:05605b8b4191",
+      "header": "Broad St-bound [J] trains are running with delays while we address a signal malfunction near Crescent St.",
+      "description": "Broad St-bound [J] trains are running with delays while we address a signal malfunction near Crescent St.",
+      "effect": "SIGNIFICANT_DELAYS",
+      "cause": "TECHNICAL_PROBLEM",
+      "active_periods": [
+        {
+          "start": "2026-03-01T09:05:56"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "J"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "J20"
+        }
+      ],
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T14:22:50.657638+00:00",
+    "instruction": "Southbound Q52-SBS and Q53-SBS stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave. The dates should be from tomorrow 8PM and repeat every monday for 4 weeks at the same time frames, end hour is 10PM.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:e4f9a7d3bb58",
+      "header": "Southbound [Q52-SBS] and [Q53-SBS] stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave. The dates should be from to",
+      "description": "Southbound [Q52-SBS] and [Q53-SBS] stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave. The dates should be from tomorrow 8PM and repeat every monday for 4 weeks at the same time frames, end hour is 10PM.",
+      "effect": "STOP_MOVED",
+      "cause": "UNKNOWN_CAUSE",
+      "active_periods": [
+        {
+          "start": "2026-03-02T00:00:00",
+          "end": "2026-03-03T00:00:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q52+"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q53+"
+        }
+      ],
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T14:29:25.475295+00:00",
+    "instruction": "Southbound Q52-SBS and Q53-SBS stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave. Dates: tomorrow 8 PM to 10 PM.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:86e5a07125a2",
+      "header": "Southbound [Q52-SBS] and [Q53-SBS] stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave.",
+      "effect": "STOP_MOVED",
+      "cause": "UNKNOWN_CAUSE",
+      "active_periods": [
+        {
+          "start": "2026-03-02T20:00:00",
+          "end": "2026-03-02T22:00:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q52+"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q53+"
+        }
+      ],
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T14:33:43.759690+00:00",
+    "instruction": "\"header\": \"Southbound Q52-SBS and Q53-SBS stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave\",",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:5218350c2347",
+      "header": "\"header\": \"Southbound [Q52-SBS] and [Q53-SBS] stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave\"",
+      "effect": "STOP_MOVED",
+      "cause": "UNKNOWN_CAUSE",
+      "active_periods": [
+        {
+          "start": "2026-03-01T09:33:26"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q52+"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q53+"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "553345"
+        }
+      ],
+      "description": null,
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T14:33:59.951672+00:00",
+    "instruction": "\"description\": \"What's happening?\\nRockaway Blvd Subway Station Accessibility Upgrades\\n\\nPlan your trip at mta.info or use the MTA app (download the app for iOS or Android)\",",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:de35c002c355",
+      "header": "\"description\": \"What's happening?\\nRockaway Blvd Subway Station Accessibility Upgrades\\n\\nPlan your trip at mta.info or use the MTA app (download the app for iO",
+      "effect": "ACCESSIBILITY_ISSUE",
+      "cause": "CONSTRUCTION",
+      "active_periods": [
+        {
+          "start": "2026-03-01T09:33:43"
+        }
+      ],
+      "informed_entities": [],
+      "description": null,
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T14:34:49.504591+00:00",
+    "instruction": "dates: Broad St-bound [J] trains are running with delays while we address a signal malfunction near Crescent St. dates: timestamp now as start no end date.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:27108c4471e7",
+      "header": "",
+      "effect": "SIGNIFICANT_DELAYS",
+      "cause": "TECHNICAL_PROBLEM",
+      "active_periods": [
+        {
+          "start": "2026-03-01T09:34:30"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "J"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "J20"
+        }
+      ],
+      "description": null,
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T14:37:40.558454+00:00",
+    "instruction": "Broad St-bound [J] trains are running with delays while we address a signal malfunction near Crescent St. dates: timestamp now as start no end date.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:866d18a3a627",
+      "header": "Broad St-bound [J] trains are running with delays while we address a signal malfunction near Crescent St.",
+      "effect": "SIGNIFICANT_DELAYS",
+      "cause": "TECHNICAL_PROBLEM",
+      "active_periods": [
+        {
+          "start": "2026-03-01T09:37:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "J"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "J20"
+        }
+      ],
+      "description": null,
+      "severity": null
+    }
+  }
+]

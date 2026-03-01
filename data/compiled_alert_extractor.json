@@ -1,0 +1,85 @@
+{
+  "predictor": {
+    "traces": [],
+    "train": [],
+    "demos": [
+      {
+        "header": "In Upper Manhattan, downtown [D] stops at 135 St",
+        "description": "What's happening?\nTrack maintenance",
+        "informed_entities_json": "[{\"agency_id\": \"MTASBWY\", \"route_id\": \"D\"}]",
+        "active_periods_json": "[{\"start\": \"2026-02-18T08:01:00\", \"end\": \"2026-02-18T13:00:00\"}, {\"start\": \"2026-02-19T08:01:00\", \"end\": \"2026-02-19T13:00:00\"}, {\"start\": \"2026-02-20T08:01:00\", \"end\": \"2026-02-20T13:00:00\"}]"
+      },
+      {
+        "header": "Elevator outage @ Cortlandt St: Fulton Center level to downtown R/W platform and access to rest of complex [Repair]",
+        "description": "Elevator outage @ Cortlandt St: Fulton Center level to downtown R/W platform and access to rest of complex [Repair]",
+        "informed_entities_json": "[{\"stop_id\": \"R25S\"}]",
+        "active_periods_json": "[{\"start\": \"2026-01-29T18:18:00\", \"end\": \"2026-02-13T19:00:00\"}]"
+      },
+      {
+        "header": "In the Bronx, [2] service operates every 16 minutes between E 180 St and Wakefield-241 St\nThe last stop for alternate trains from Manhattan is E 180 St",
+        "description": "Transfer at E 180 St [accessibility icon] to a Wakefield-bound [2] to continue your trip.\nWhat's happening?\nWe're replacing tracks",
+        "informed_entities_json": "[{\"agency_id\": \"MTASBWY\", \"route_id\": \"2\"}]",
+        "active_periods_json": "[{\"start\": \"2026-02-17T18:30:00\", \"end\": \"2026-02-17T22:30:00\"}, {\"start\": \"2026-02-18T18:30:00\", \"end\": \"2026-02-18T22:30:00\"}, {\"start\": \"2026-02-19T18:30:00\", \"end\": \"2026-02-19T22:30:00\"}, {\"start\": \"2026-02-20T18:30:00\", \"end\": \"2026-02-20T22:30:00\"}, {\"start\": \"2026-02-24T18:30:00\", \"end\": \"2026-02-24T22:30:00\"}, {\"start\": \"2026-02-25T18:30:00\", \"end\": \"2026-02-25T22:30:00\"}, {\"start\": \"2026-02-27T18:30:00\", \"end\": \"2026-02-27T22:30:00\"}]"
+      },
+      {
+        "header": "Elevator outage @ 66 St-Lincoln Center: East side of Broadway (between 65 St & 66 St) to uptown platform [Maintenance]",
+        "description": "Elevator outage @ 66 St-Lincoln Center: East side of Broadway (between 65 St & 66 St) to uptown platform [Maintenance]",
+        "informed_entities_json": "[{\"stop_id\": \"124N\"}]",
+        "active_periods_json": "[{\"start\": \"2026-02-12T06:00:00\", \"end\": \"2026-02-12T14:00:00\"}]"
+      },
+      {
+        "header": "In Lower Manhattan and Brooklyn, [Q] runs via the [R] in both directions between Canal St and DeKalb Av",
+        "description": "Trains stop at City Hall, Cortlandt St, Rector St, Whitehall St-South Ferry, Court St and Jay St-MetroTech.\n\nNote: At Canal St, [Q] trains stop at the [R] platform during this time.\n\nWhat's happening?\nStructural maintenance",
+        "informed_entities_json": "[{\"agency_id\": \"MTASBWY\", \"route_id\": \"Q\"}]",
+        "active_periods_json": "[{\"start\": \"2026-02-28T12:00:00\", \"end\": \"2026-03-02T06:00:00\"}]"
+      },
+      {
+        "header": "St George-bound S48 buses are detoured from Richmond Terrace at Arlington Ave to Arlington Pl at South Ave",
+        "description": "Buses will not stop at Richmond Terrace at Arlington Ave and South Ave at Richmond Terrace.\n\nBuses make stops as requested along Arlington Ave.\nSee map\n\nWhat's happening?\nDOT- road work\n\nNote: Bus arrival information may not be available/accurate while buses are detoured",
+        "informed_entities_json": "[{\"agency_id\": \"MTA NYCT\", \"route_id\": \"S48\"}]",
+        "active_periods_json": "[{\"start\": \"2026-02-02T08:00:00\", \"end\": \"2026-02-07T01:00:00\"}, {\"start\": \"2026-02-09T08:00:00\", \"end\": \"2026-02-14T01:00:00\"}, {\"start\": \"2026-02-16T08:00:00\", \"end\": \"2026-02-21T01:00:00\"}, {\"start\": \"2026-02-23T08:00:00\", \"end\": \"2026-02-28T01:00:00\"}, {\"start\": \"2026-03-02T08:00:00\", \"end\": \"2026-03-07T01:00:00\"}, {\"start\": \"2026-03-09T07:00:00\", \"end\": \"2026-03-14T00:00:00\"}, {\"start\": \"2026-03-16T07:00:00\", \"end\": \"2026-03-21T00:00:00\"}, {\"start\": \"2026-03-23T07:00:00\", \"end\": \"2026-03-28T00:00:00\"}, {\"start\": \"2026-03-30T07:00:00\", \"end\": \"2026-04-04T00:00:00\"}, {\"start\": \"2026-04-06T07:00:00\", \"end\": \"2026-04-11T00:00:00\"}, {\"start\": \"2026-04-13T07:00:00\", \"end\": \"2026-04-15T06:59:59\"}]"
+      },
+      {
+        "header": "In the Bronx, uptown [2][5] skips Jackson Av, Prospect Av, Intervale Av, Simpson St, Freeman St, 174 St and West Farms Sq-E Tremont Av",
+        "description": "For service to these stations, take the [2] or [5] to E 180 St [accessibility icon] and transfer to a Manhattan-bound [2] or [5].\n\nFor service from these stations, take the [2] or [5] to 149 St-Grand Concourse and transfer to an uptown [2] or [5].\n\nTravel tip:\nFor service to Jackson Av, Prospect Av, Intervale Av and Simpson St, transfer to the Bx4 bus at 3 Av-149 St [accessibility icon].\n\nWhat's happening?\nSignal maintenance\n\n[accessibility icon] This service change affects one or more ADA accessible stations and these travel alternatives may not be fully accessible. Please contact 511 to plan your trip.",
+        "informed_entities_json": "[{\"agency_id\": \"MTASBWY\", \"route_id\": \"2\"}, {\"agency_id\": \"MTASBWY\", \"route_id\": \"5\"}]",
+        "active_periods_json": "[{\"start\": \"2026-03-04T18:45:00\", \"end\": \"2026-03-04T23:30:00\"}]"
+      },
+      {
+        "header": "Elevator outage @ Jackson Hts-Roosevelt Av: mezzanine to Forest Hills and Jamaica-bound E/F/M/R platform [Capital Replacement]",
+        "description": "Elevator outage @ Jackson Hts-Roosevelt Av: mezzanine to Forest Hills and Jamaica-bound E/F/M/R platform [Capital Replacement]",
+        "informed_entities_json": "[{\"stop_id\": \"G14N\"}]",
+        "active_periods_json": "[{\"start\": \"2025-10-29T06:20:00\", \"end\": \"2026-07-01T06:59:00\"}]"
+      }
+    ],
+    "signature": {
+      "instructions": "You are a GTFS-Realtime Semantic Compiler for the MTA.\n\nGiven a transit alert's header and description, extract the structured\nGTFS-RT metadata. \n\nCRITICAL RULES:\n- informed_entities must include ALL affected routes listed in the text.\n- NEVER include stops or routes mentioned as alternatives, detours, or \n  recommendations (e.g. \"take the B instead\", \"use stops on X St instead\").\n- active_periods must be ISO-8601 datetime strings parsed from the text.\n- If no specific stops are mentioned, only include the route_id.",
+      "fields": [
+        {
+          "prefix": "Header:",
+          "description": "The short alert headline written by the operator."
+        },
+        {
+          "prefix": "Description:",
+          "description": "The detailed alert body with stop and timing information."
+        },
+        {
+          "prefix": "Informed Entities Json:",
+          "description": "JSON array of InformedEntity objects. Schema: [{\"agency_id\": str, \"route_id\": str, \"stop_id\": str|null}]"
+        },
+        {
+          "prefix": "Active Periods Json:",
+          "description": "JSON array of ActivePeriod objects. Schema: [{\"start\": \"ISO-8601\", \"end\": \"ISO-8601\"|null}]"
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.12",
+      "dspy": "3.1.3",
+      "cloudpickle": "3.1"
+    }
+  }
+}

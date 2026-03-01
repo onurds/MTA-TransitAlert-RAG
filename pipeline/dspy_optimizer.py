@@ -3,12 +3,12 @@ dspy_optimizer.py
 =================
 Phase 3: DSPy Prompt Optimization for the MTA Transit Alert RAG pipeline.
 
-REQUIRES: vLLM running Qwen3.5-35B-A3B on RunPod.
-  export VLLM_BASE_URL="http://<pod-id>-8000.proxy.runpod.net/v1"
-  export VLLM_MODEL_NAME="Qwen/Qwen3.5-35B-A3B"
+Supports two backends via LLM_PROVIDER:
+- gemini (default; expects GEMINI_API_KEY or .gemini_api)
+- vllm (for local Qwen comparison at final stage)
 
 Run:
-  python3 dspy_optimizer.py
+  python3 pipeline/dspy_optimizer.py
 
 Output:
   compiled_alert_extractor.json  — optimized few-shot program ready to load.
@@ -21,11 +21,14 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 import dspy
 
+try:
+    from pipeline.llm_config import build_dspy_lm, current_model_label, load_llm_config
+except ModuleNotFoundError:
+    from llm_config import build_dspy_lm, current_model_label, load_llm_config  # type: ignore
+
 # ---------------------------------------------------------------------------
-# vLLM Configuration
+# Runtime Configuration
 # ---------------------------------------------------------------------------
-VLLM_BASE_URL   = os.environ.get("VLLM_BASE_URL",   "http://localhost:8000/v1")
-VLLM_MODEL_NAME = os.environ.get("VLLM_MODEL_NAME",  "Qwen/Qwen3.5-35B-A3B")
 GOLDEN_SET_PATH = os.environ.get("GOLDEN_SET_PATH",  "data/golden_annotations.jsonl")
 COMPILED_OUTPUT = os.environ.get("COMPILED_OUTPUT",  "data/compiled_alert_extractor.json")
 DSPY_MAX_TOKENS = int(os.environ.get("DSPY_MAX_TOKENS", "512"))
@@ -187,16 +190,15 @@ def gtfs_metric(example: dspy.Example, prediction, trace=None) -> float:
 # ---------------------------------------------------------------------------
 
 def run_optimization(trainset, devset):
-    print("\n--- Configuring DSPy with vLLM ---")
-    lm = dspy.LM(
-        f"openai/{VLLM_MODEL_NAME}",
-        base_url=VLLM_BASE_URL,
-        api_key="not-needed",
+    llm_config = load_llm_config()
+    print("\n--- Configuring DSPy LM ---")
+    lm = build_dspy_lm(
+        config=llm_config,
         temperature=0.0,
         max_tokens=DSPY_MAX_TOKENS,
     )
     dspy.configure(lm=lm)
-    print(f"LM configured: {VLLM_MODEL_NAME} at {VLLM_BASE_URL}")
+    print(f"LM configured: {current_model_label(llm_config)}")
     print(
         "DSPy runtime config: "
         f"USE_COT={DSPY_USE_COT}, MAX_TOKENS={DSPY_MAX_TOKENS}, "
@@ -209,7 +211,7 @@ def run_optimization(trainset, devset):
     program = AlertExtractor()
 
     print("\n--- Running BootstrapFewShotWithRandomSearch ---")
-    print("(This will take several minutes — each candidate requires forward passes through Qwen3.5-35B-A3B)")
+    print("(This may take several minutes depending on model latency and candidate count.)")
     teleprompter = dspy.BootstrapFewShotWithRandomSearch(
         metric=gtfs_metric,
         max_bootstrapped_demos=DSPY_MAX_BOOTSTRAPPED_DEMOS,
@@ -238,9 +240,17 @@ def evaluate(program, devset):
         display_progress=True,
         display_table=5,
     )
-    score = evaluator(program)
-    print(f"\nDev Set Score: {score:.4f} (route_id F1 + active_period bonus)")
-    return score
+    result = evaluator(program)
+
+    # DSPy >=3 returns EvaluationResult(score=..., results=...).
+    # Older/alternate runtimes may return a raw float.
+    if hasattr(result, "score"):
+        score_value = float(result.score)
+    else:
+        score_value = float(result)
+
+    print(f"\nDev Set Score: {score_value:.2f} (route_id F1 + active_period bonus)")
+    return result
 
 # ---------------------------------------------------------------------------
 # Offline Smoke Test (no model required)
@@ -299,17 +309,25 @@ if __name__ == "__main__":
     # Step 1: Always run offline schema tests first (no model needed)
     trainset, devset = run_offline_schema_test()
 
-    # Step 2: Run optimizer only when vLLM is available
-    vllm_url = os.environ.get("VLLM_BASE_URL")
-    if not vllm_url or vllm_url == "http://localhost:8000/v1":
-        print("\n⚠️  VLLM_BASE_URL is not set to a RunPod endpoint.")
-        print("Skipping optimizer run. Once Qwen3.5-35B-A3B is downloaded and vLLM is running:")
+    # Step 2: Run optimizer when API configuration is available
+    try:
+        compiled_program = run_optimization(trainset, devset)
+    except Exception as e:
+        print("\nOptimizer run could not start or complete.")
+        print(f"Reason: {e}")
+        print("For Gemini:")
+        print("  export LLM_PROVIDER=\"gemini\"")
+        print("  echo \"<YOUR_KEY>\" > .gemini_api")
+        print("For vLLM/Qwen:")
+        print("  export LLM_PROVIDER=\"vllm\"")
         print("  export VLLM_BASE_URL=\"http://<pod-id>-8000.proxy.runpod.net/v1\"")
         print("  export VLLM_MODEL_NAME=\"Qwen/Qwen3.5-35B-A3B\"")
-        print("  python3 dspy_optimizer.py")
-    else:
-        # Step 3: Run and save the compiled prompt program
-        compiled_program = run_optimization(trainset, devset)
+        raise SystemExit(1)
 
-        # Step 4: Evaluate on devset
+    # Step 3: Evaluate on devset (non-fatal reporting guard)
+    try:
         evaluate(compiled_program, devset)
+    except Exception as e:
+        print("\nCompiled program is saved, but evaluation reporting failed.")
+        print(f"Reason: {e}")
+        raise SystemExit(1)

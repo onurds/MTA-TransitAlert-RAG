@@ -1,0 +1,10 @@
+networkx>=3.2
+numpy>=1.26
+pydantic>=2.8
+langchain>=0.3
+langchain-core>=0.3
+langchain-openai>=0.2
+langchain-google-genai>=2.0
+googlemaps>=4.10
+fastapi>=0.115
+uvicorn>=0.32

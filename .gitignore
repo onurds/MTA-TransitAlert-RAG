@@ -3,3 +3,6 @@
 /runpod
 /.vscode
 /logs
+.gemini_api
+*.pyc
+.DS_Store

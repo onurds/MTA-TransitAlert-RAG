@@ -1,144 +1,147 @@
-# Project Proposal
+# Project Proposal (Revised)
 
-## Automating GTFS Realtime: A Human in the Loop Framework for Extracting Structured Service Alerts from Operational Text
+## Automating GTFS Realtime Metadata from Operational Transit Text
 
-**Investigator:** Onur Dursun **Date:** Feb, 2026 **Context:** Internal Research Project (Parallel to Thesis)
+Investigator: Onur Dursun  
+Original draft: Feb 2026  
+Revision: March 1, 2026
 
-### I. Problem Definition
+## I. Problem
 
-Public transit agencies face a critical interoperability bottleneck between internal operations and external passenger communication. While the Global Transit Feed Specification Realtime (GTFS Realtime) standard provides rigorous fields for describing service disruptions (including specific `Cause`, `Effect`, and `Informed Entity` enums), the operational reality is different.
+Transit control teams write alerts in free text under time pressure. GTFS-Realtime consumers need structured fields (`cause`, `effect`, `informed_entities`, `active_periods`). In live feeds, these fields are frequently `UNKNOWN_*` or route-only, which reduces rider-facing routing quality.
 
-Agency staff, working under time pressure in control centers, utilize legacy Content Management Systems (CMS) to broadcast alerts. These systems prioritize free text entry to satisfy immediate channels like SMS and social media. Consequently, the structured data required by downstream routing engines (Google Maps, Citymapper) is often neglected.
+## II. Goal
 
-**Current Data Quality Audit:** Analysis of live MTA feeds reveals that a significant percentage of alerts default to `UNKNOWN_CAUSE` or `UNKNOWN_EFFECT`, forcing routing algorithms to make heuristic guesses rather than deterministic adjustments.
+Build a production-usable semantic compiler that transforms natural-language alert instructions into schema-valid legacy alert JSON while minimizing hallucination risk.
 
-**Figure 1: Example of the "Rich Text, Poor Metadata" Problem** *The following JSON represents a real alert where the operator explicitly describes a detour and utility work in the text, yet the structured fields remain undefined.*
+Primary targets:
 
+1. Deterministic grounding of routes/stops on MTA GTFS graph data.
+2. Deterministic temporal normalization of relative phrases.
+3. Conditional enum filling (`cause`, `effect`) with confidence gating.
+4. Reliable low-confidence recovery with geocoding fallback.
+5. Operator-friendly dual-input contract (instruction-only or legacy alert edits).
+
+## III. Architectural Revision
+
+### Original proposal direction
+
+- DSPy-optimized extraction runtime around `/extract`.
+
+### Implemented runtime direction
+
+- `/compile` endpoint with deterministic-first orchestration.
+- DSPy removed from production runtime path.
+- Bounded LLM calls retained only for uncertain, constrained subtasks.
+
+Why changed:
+
+1. Observed mismatch between DSPy runtime accuracy and stronger direct model behavior on real instructions.
+2. Need for tighter operational control, easier debugging, and explicit fallback behavior.
+3. Better alignment with strict schema and grounding constraints.
+
+## IV. Implemented System Design
+
+### Module 1: Deterministic GTFS Graph
+
+- NetworkX graph built from `MTA_GTFS` static feeds.
+- Route-stop neighborhoods used to bound stop extraction.
+
+### Module 2: Compiler Orchestration
+
+- Normalizes dual input modes into one compile intent.
+- Supports instruction directives (`header`, `description`, `dates`, enum overrides).
+- Preserves legacy alert IDs when provided.
+
+### Module 3: Temporal Resolver
+
+- Resolves `today`, `tomorrow`, `tonight`, weekday ranges, same-day windows.
+- Returns ISO-8601 periods.
+
+### Module 4: Enum Resolver
+
+- Rule-first mapping from text to GTFS enums.
+- Constrained LLM fallback only when unresolved.
+- Confidence gate keeps `UNKNOWN_*` when evidence is weak.
+
+### Module 5: Stop Selection + Geocode Fallback
+
+- Candidate stops come from route neighborhoods.
+- Optional LLM selector can pick only from allowed stop candidate IDs.
+- Google Maps fallback triggers under explicit confidence policy.
+
+### Module 6: Description Generator (Bounded)
+
+- Uses style examples mined from `mta_alerts.json`.
+- Generates nullable description only when grounded rider guidance exists.
+- Rejects header copies and unsupported lines.
+
+## V. Runtime Contract
+
+Endpoint: `POST /compile`
+
+Request mode A:
+
+```json
+{"instruction": "..."}
 ```
-{
-  "id": "lmm:planned_work:29897",
-  "header": "S40 buses are detoured in both directions between South Ave at Arlington Place and Richmond Terrace at Arlington Ave.",
-  "description": "For eastbound service, use the stops on South Ave at Brabant St or Richmond Terrace at South Ave... What's Happening? Utility Work",
-  "effect": "UNKNOWN_EFFECT",
-  "cause": "UNKNOWN_CAUSE",
-  "active_periods": [
-    {
-      "start": "2026-01-25T08:00:00",
-      "end": "2026-04-12T07:00:00"
-    }
-  ],
-  "informed_entities": [
-    {
-      "agency_id": "MTA NYCT",
-      "route_id": "S40"
-    }
-  ]
-}
+
+Request mode B:
+
+```json
+{"alert": {...legacy fields...}, "instruction": "optional edits"}
 ```
 
-**Analysis of Figure 1:**
-- **Cause Gap:** The text states "Utility Work" (mapping to `MAINTENANCE`), but `cause` is `UNKNOWN_CAUSE`.
-- **Effect Gap:** The header states "buses are detoured", but `effect` is `UNKNOWN_EFFECT`.
-- **Granularity Gap:** The alert affects specific segments ("South Ave at Arlington Place"), but `informed_entities` only tags the entire Route S40, punishing riders on unaffected parts of the line.
-- **Contextual Ambiguity:** The text mentions multiple locations. The stops in the **header** (South Ave/Arlington Pl) are the *affected* stops where service is lost. The stops in the **description** (South Ave/Brabant St) are *alternatives*where service is active. A naive keyword search would mistakenly flag the alternative stops as disrupted.
+Optional per-request LLM override:
 
-### II. Objectives
+```json
+{"instruction": "...", "llm_provider": "xai", "llm_model": "grok-4-1-fast-reasoning"}
+```
 
-This project aims to develop a neuro symbolic pipeline that functions as a "Semantic Compiler" for transit alerts. The system automates the translation of unstructured operational drafts into strictly typed GTFS Realtime JSON objects.
+Response schema (legacy):
 
-**Primary Objectives:**
-1. **Augmentation (Stateless HITL):** Deploy a human-in-the-loop workflow where the AI suggests structured fields as a background API service. Operators verify or correct the JSON via simple chat prompts (e.g., "Change cause to MAINTENANCE"), bypassing the need for complex, stateful graph checkpoints.
-2. **Grounding:** Eliminate hallucination of station names, route identifiers, and timestamps by grounding all extraction tasks in static GTFS data and valid calendars.
-3. **Standardization:** Ensure 100% compliance with GTFS Realtime enums, converting vague phrases like "track work" into specific codes like `CONSTRUCTION`.
+- `id`
+- `header`
+- `description` (nullable)
+- `effect`
+- `cause`
+- `severity`
+- `active_periods`
+- `informed_entities`
 
-### III. Proposed Methodology
+## VI. Evaluation Plan (Current)
 
-The architecture follows a specialized **Graph-RAG + Extraction Pipeline**, tailored to handle the uniquely relational nature of transit data. Rather than generating conversational text, this pipeline strictly extracts neuro-symbolic data types from unstructured operational drafts.
+Use `data/golden_annotations.jsonl` and evaluate via `scripts/eval_api.py`.
 
-Module 1: Deterministic Knowledge Graph Construction
+Metrics:
 
-Instead of relying on LLMs to hallucinate a graph from flat text, the system builds a flawless relational graph directly from static GTFS tabular data.
-- **Input:** NYC MTA `stops.txt` and `routes.txt`.
-- **Process:** Using a graph structure (e.g., NetworkX), the system constructs a highly-connected Knowledge Graph where Nodes represent Stops and Routes, and Edges represent "Serves" or "Next_Stop" relationships.
-- **Output:** An in-memory, deterministic relational Knowledge Graph of the entire physical network, enabling multi-hop retrieval.
-- **Temporal Reference:** Alongside the physical index, a temporal index is generated from `calendar.txt` to map colloquial time patterns ("Labor Day") to precise ISO-8601 windows.
+1. Route F1 / route exact match.
+2. Stop F1 (rows with gold stops).
+3. Active period presence and exact-match accuracy.
+4. Latency distribution (mean, p50, p95).
 
-Module 2: Dual-Level Graph Retrieval
+Ablation tracks:
 
-The system leverages the semantic power of graph traversal to eliminate station ambiguity.
-- **Input:** Raw alert text (header + description).
-- **Scope Restriction logic:** The system isolates physical locations where service is actively disrupted. Locations mentioned as alternatives, bypasses, or recommended detours are strictly excluded from the `informed_entity` mapping list.
-- **High-Level Retrieval (Route Focus):** The system first identifies the contextual route in the text (e.g. "Q Train").
-- **Low-Level Retrieval (Stop Focus):** Utilizing the high-level route node, the system isolates its search solely to the neighborhood of physical stops connected via "Serves" edges. A vector-based semantic search operates *only* within this sub-graph to find the targeted stop.
-- **Fallback Strategy (External Geocoding):**
-  - If the deterministic graph traversal returns zero logical candidates (e.g., due to severe operator typos or novel landmarks), the system queries the **Google Maps Geocoding API** for coordinate resolution.
+1. Rule-only vs rule+LLM enum filling.
+2. With vs without geocode fallback.
+3. Provider comparison (`gemini` vs `xai`; optional `vllm` comparator).
 
-Module 3: Constraint Extraction and Optimization (The Reasoner)
+## VII. Status by Phase
 
-This is the core intelligence layer. It utilizes a Small Language Model (SLM) to parse logic without generating free text.
-- **Model:** **Qwen3.5-35B-A3B** (via vLLM) exposed as a stateless API endpoint.
-- **Strict Schema Enforcement:** Output is heavily constrained using formal Pydantic models (e.g., `outlines` or `guidance`). The prompt itself is structurally distributed through these Schema definitions to enforce MTA-specific formatting rules (such as dual translations for `en` and `en-html` and precise Mercury extensions), eliminating structural hallucinations.
-- **Neuro-Symbolic Calibration (DSPy):** Because historical MTA data leaves `Cause` and `Effect` as `"UNKNOWN"`, our optimization layer focuses strictly on calibrating the extraction of verifiable GTFS fields (`informed_entities` and `active_periods`):
-  - A "Golden Set" is derived directly from historical alerts (`mta_alerts.json`), pairing raw operator text with ground-truth physical entity and temporal outputs.
-  - **DSPy** leverages this set via few-shot optimization algorithms (e.g., `BootstrapFewShotWithRandomSearch`) to mathematically discover the optimal reasoning prompt for Qwen, maximizing extraction accuracy when mapping vague operator slang to the deterministic network graph nodes.
-- **Context Injection:**
-  - **Spatial:** Valid `stop_id` and `route_id` candidates retrieved seamlessly from Module 2.
-  - **Temporal:** A Lookahead Window to resolve relative time phrasing.
+Completed:
 
-Module 4: Pipeline Delivery
+1. Runtime pivot to `/compile` with dual-input support.
+2. DSPy removal from production path.
+3. Deterministic graph retrieval and alternative-stop filtering.
+4. Confidence scoring and fallback wiring.
+5. xAI + Gemini provider support and per-request model override.
+6. Interactive testing utility and API evaluation script updates.
 
-The system functions asynchronously as a stateless API for the CMS.
-- **Workflow:**
-  1. Operator types draft text into the CMS.
-  2. A background request triggers the pipeline.
-  3. The API returns strictly-typed GTFS Realtime JSON mapped to the draft text.
-  4. CMS displays a "Suggested Metadata" panel.
-- **Feedback Loop:** If the operator modifies a field, instead of managing complex graph states, the operator simply updates the CMS fields or provides chat feedback. The system re-processes the prompt and returns updated JSON. Any manual overrides are logged offline for future DSPy prompt re-optimization.
+In progress:
 
-### IV. Implementation Stack
+1. Description-generation stability across alert archetypes.
+2. Harder stop disambiguation edge cases.
 
-This project shares the infrastructure of the concurrent thesis work to maximize resource efficiency.
-- **Orchestration:** **LangChain**, utilizing dynamic routing and tool binding to execute Graph search capabilities with Google Maps API fallback functions.
-- **Inference Engine:** **vLLM** serving **Qwen3.5-35B-A3B**, constrained by **outlines**.
-- **Optimization Layer:** **DSPy** for automated prompt optimization and enum assignment calibration.
-- **Graph Engine:** **NetworkX** (or equivalent lightweight library) for loading and traversing the deterministic GTFS knowledge graph.
-- **Backend:** **Python** with **FastAPI** for stateless API design.
-- **Hardware:** **RunPod** Cloud Instance (NVIDIA A100 80GB).
+## VIII. Expected Contribution
 
-### V. Execution Plan
-
-**Phase 1: Deterministic Data Engineering (Weeks 1-2)**
-- Ingest NYC MTA GTFS Static feeds.
-- Build the **Temporal Reference Index** from calendar data.
-- Develop the script to generate the **NetworkX Relational Knowledge Graph** linking Stops to Routes via `stops.txt` and `routes.txt`.
-
-**Phase 2: The Graph Retrieval Pipeline (Weeks 3-4)**
-- Implement the Scope Restriction logic to ignore alternative/detour stops.
-- Implement the Dual-Level retrieval: traversing the High-Level Route node to unlock the neighborhood of Low-Level Stop nodes for localized semantic matching.
-- **Implement Fallback Logic:** Build the LangChain tool routing for the Google Maps Geocoding API.
-- *Milestone:* The Retriever can successfully disambiguate "86th street" based on the Route context.
-
-**Phase 3: The Optimized Reasoner (Weeks 5-6)**
-- Build the **Golden Evaluation Dataset**: extract a subset of historical operator text (`mta_alerts.json`) and pair it with its verified GTFS JSON payload (`informed_entities` and `active_periods`) to serve as the ground truth.
-- Use **DSPy** to compile the optimal few-shot prompt for spatial and temporal entity extraction based on the Golden Dataset.
-- Integrate Pydantic schema constraints with the vLLM server (`outlines` or `guidance`) to enforce strict JSON output incorporating Mercury extensions.
-
-**Phase 4: Integration and API Delivery (Weeks 7-8)**
-- Wrap the complete pipeline in a **FastAPI** stateless endpoint.
-- Simulate the CMS environment: Feed historical alert text and measure generation accuracy against the "Golden Set."
-
-### VI. Evaluation Strategy
-
-To validate the system for internal use and potential publication, performance will be measured against a "Golden Set" of manually annotated alerts.
-1. **Entity Grounding Accuracy:**
-   - Did the system identify the correct `stop_id`?
-   - *Target:* &gt;98% accuracy (Essential for preventing valid alerts from appearing at the wrong station).
-2. **Contextual Filtering Rate:**
-   - Did the system correctly ignore alternative stops mentioned in the description?
-   - *Target:* &gt;99% True Negative Rate for alternative stops.
-3. **Temporal Resolution Accuracy:**
-   - Percentage of relative time expressions ("next weekend") correctly mapped to ISO-8601 start/end times.
-   - *Target:* >95% accuracy.
-4. **Latency:**
-   - Time from text input to JSON suggestion.
-   - *Target:* <4 seconds (Asynchronous processing allows the 30B model to fully reason without blocking the operator's workflow).
+The paper contribution is a practical deterministic-first architecture for transit alert compilation where LLMs are constrained to bounded decision points instead of full free-form generation, yielding better controllability and safer schema outputs for operational deployment.

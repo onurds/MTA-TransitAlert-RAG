@@ -6627,16 +6627,17 @@
     "id": "lmm:alert:508367",
     "header": "[Q] trains are running with delays in both directions in Brooklyn after we replaced a broken rail near 7 Av.",
     "description": "[Q] trains have resumed making scheduled stops between Atlantic Av-Barclays Ctr and Prospect Park.\n\nPlanned work reminder:\n[Q] service runs in two sections:\n1. Between 96 St and Atlantic Av-Barclays Ctr.\n2. Between Atlantic Av-Barclays Ctr and Coney Island-Stillwell Av.",
-    "url": null,
     "effect": "UNKNOWN_EFFECT",
     "cause": "UNKNOWN_CAUSE",
     "severity": null,
-    "tts_header": null,
-    "tts_description": null,
     "active_periods": [
       {
         "start": "2026-02-11T09:47:03",
         "end": "2026-02-11T10:25:54"
+      },
+      {
+        "start": "2026-02-12T09:45:00",
+        "end": "2026-02-12T10:25:00"
       }
     ],
     "informed_entities": [
