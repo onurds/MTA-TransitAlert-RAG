@@ -9,23 +9,26 @@ A guardrailed compiler that converts MTA-style natural-language alerts into lega
 - Input supports two modes:
 1. instruction-only text
 2. legacy alert object + optional instruction edits
+- Free-form operator text is supported; no directive syntax is required.
 - Deterministic grounding uses a NetworkX graph built from `MTA_GTFS`.
-- LLM usage is bounded to constrained subtasks only:
-1. enum fallback (`cause`/`effect`) when rule-first mapping is uncertain
-2. stop candidate selection from precomputed allowed candidates
-3. optional MTA-style `description` generation with strict validation
+- LLM usage is bounded to constrained subtasks:
+1. intent extraction (`alert_text`, temporal phrases, explicit IDs, location phrases)
+2. entity selection from bounded route/stop candidates
+3. enum fallback (`cause`/`effect`) when rule-first mapping is uncertain
+4. moderate MTA-style header/description rendering with strict validation
 - Google Maps geocoding fallback is integrated into compile flow and triggered by confidence threshold logic.
 
 ## Pipeline Flow
 
-1. Normalize request into a single compile intent.
-2. Parse instruction directives (`header:`, `description:`, `dates:`, enum overrides).
-3. Resolve time windows with deterministic temporal resolver (`today`, `tomorrow`, ranges).
-4. Ground routes/stops from GTFS graph neighborhoods and exclude alternative-stop context.
-5. Compute confidence score (`route`, `stop`, `temporal`, `schema`).
-6. Trigger Google Maps fallback if needed.
-7. Apply conservative fallback entity policy if confidence remains low.
-8. Return legacy payload with strict schema validation.
+1. Parse free-form operator text with LLM-first intent extraction.
+2. Validate/normalize extracted IDs and drop invalid explicit stop IDs.
+3. Lock valid explicit IDs (never overwritten by inferred alternatives).
+4. Resolve time windows with deterministic temporal resolver (`today`, `tomorrow`, recurring ranges, now+duration).
+5. Ground routes/stops from GTFS graph neighborhoods and bounded candidate expansion.
+6. Run bounded LLM entity reasoning over allowed candidate IDs.
+7. Trigger Google Maps fallback only for unresolved low-confidence location grounding.
+8. Render moderate MTA-style header/description without introducing new facts.
+9. Return legacy payload with strict schema validation and fixed key order.
 
 ## API Contract
 
@@ -88,6 +91,7 @@ A guardrailed compiler that converts MTA-style natural-language alerts into lega
 ```
 
 `description` is intentionally nullable and may be omitted by model generation logic when source facts are insufficient.
+When explicit stop IDs are invalid, they are dropped and inference continues conservatively.
 
 ## LLM Providers
 

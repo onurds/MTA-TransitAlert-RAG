@@ -76,6 +76,59 @@ class DescriptionGenerator:
             return "reduced_service"
         return "generic"
 
+    def render_header_mta(
+        self,
+        llm: Any,
+        header: str,
+        source_text: str,
+        route_ids: Sequence[str],
+        effect: str,
+        style_intent: Optional[str] = None,
+    ) -> str:
+        base = self._deterministic_header_polish(header or source_text or "")
+        if not base:
+            return ""
+
+        # Deterministic first to avoid style drift.
+        if llm is None:
+            return base
+
+        mode = (style_intent or "moderate").strip().lower()
+        if mode not in {"moderate", "mta", "official"}:
+            return base
+
+        prompt = (
+            "Rewrite this transit alert header in concise MTA service-alert style.\n"
+            "Return strict JSON only: {\"header\": string, \"confidence\": number}.\n"
+            "Rules:\n"
+            "- Preserve all facts.\n"
+            "- Do NOT add new stops/routes/times.\n"
+            "- Keep it one sentence.\n"
+            "- Keep route tokens unchanged when present.\n\n"
+            f"INPUT_HEADER: {base}\n"
+            f"SOURCE_FACTS: {source_text}\n"
+            f"ROUTES: {list(route_ids)}\n"
+            f"EFFECT: {effect}\n"
+        )
+        try:
+            resp = llm.invoke(prompt)
+            content = getattr(resp, "content", "") if resp is not None else ""
+            if not isinstance(content, str):
+                content = str(content)
+            parsed = self._extract_first_json_object(content)
+            candidate = str(parsed.get("header") or "").strip()
+            conf = float(parsed.get("confidence", 0.0) or 0.0)
+            if conf < 0.6:
+                return base
+            if not candidate:
+                return base
+            candidate = self._deterministic_header_polish(candidate)
+            if not self._validate_rendered_header(candidate, source_text, route_ids):
+                return base
+            return candidate
+        except Exception:
+            return base
+
     def generate_or_null(
         self,
         llm: Any,
@@ -138,6 +191,55 @@ class DescriptionGenerator:
             return self._append_whats_happening(candidate, cause)
         except Exception:
             return self._deterministic_fallback(src, cause)
+
+    @staticmethod
+    def _deterministic_header_polish(text: str) -> str:
+        out = (text or "").strip()
+        if not out:
+            return ""
+
+        out = re.sub(r"\b(?:the\s+)?dates?\s+(?:should\s+be|are|is)\b.*$", "", out, flags=re.IGNORECASE).strip()
+        out = re.sub(r"\btime(?:\s*frame)?\s+(?:is|are)\b.*$", "", out, flags=re.IGNORECASE).strip()
+        out = re.sub(r"\bwhat(?:['’])?s\s+happening\??.*$", "", out, flags=re.IGNORECASE).strip()
+        out = re.sub(r"\bsee\s+a\s+map(?:\s+of\s+(?:this\s+)?.+)?$", "", out, flags=re.IGNORECASE).strip()
+        out = re.sub(r"\bplan\s+your\s+trip\b.*$", "", out, flags=re.IGNORECASE).strip()
+        out = re.sub(
+            r"\b(?:today|tomorrow|tonight)\b\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:-|to|until|through)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)\b.*$",
+            "",
+            out,
+            flags=re.IGNORECASE,
+        ).strip()
+        out = re.sub(r"\bwill\s+not\s+stop\s+at\b", "will not make stops at", out, flags=re.IGNORECASE)
+        out = re.sub(r"\bwill\s+not\s+stop\s+on\b", "will not make stops on", out, flags=re.IGNORECASE)
+        out = re.sub(r"\bwill\s+not\s+stop\b", "will not make stops", out, flags=re.IGNORECASE)
+        out = re.sub(r"\s{2,}", " ", out).strip(" ,.;:-")
+        if out and out[-1] not in ".!?":
+            out = f"{out}."
+        return out
+
+    def _validate_rendered_header(
+        self,
+        candidate: str,
+        source_text: str,
+        route_ids: Sequence[str],
+    ) -> bool:
+        cand = self._normalize_spaces(candidate)
+        if not cand:
+            return False
+
+        allowed = {str(r).upper() for r in route_ids if r}
+        bullets = re.findall(r"\[([A-Za-z0-9+\-]+)\]", cand)
+        for b in bullets:
+            token = b.strip().upper().replace("-SBS", "+")
+            if allowed and token not in allowed:
+                return False
+
+        source_tokens = set(self._tokenize(source_text))
+        cand_tokens = set(self._tokenize(cand))
+        if not cand_tokens:
+            return False
+        overlap = len(source_tokens & cand_tokens) / max(1, len(cand_tokens))
+        return overlap >= 0.5
 
     @staticmethod
     def _should_generate_description(source_text: str) -> bool:

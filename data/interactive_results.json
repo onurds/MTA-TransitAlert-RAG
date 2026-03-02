@@ -604,5 +604,548 @@
       "description": null,
       "severity": null
     }
+  },
+  {
+    "timestamp_utc": "2026-03-01T14:56:58.795305+00:00",
+    "instruction": "**Southbound Q52-SBS and Q53-SBS stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave. What's happening? Rockaway Blvd Subway Station Accessibility Upgrades. Plan your trip at mta.info or use the MTA app (download the app for iOS or Android).** Dates: from right now to 2 hours after.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:8dc5a44cb26a",
+      "header": "**Southbound [Q52-SBS] and [Q53-SBS] stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave. What's happening? Rockawa",
+      "description": "Plan your trip at mta.info or use the MTA app (download the app for iOS or Android).\n\nWhat's happening?\nRockaway Blvd Subway Station Accessibility Upgrades",
+      "effect": "STOP_MOVED",
+      "cause": "CONSTRUCTION",
+      "active_periods": [
+        {
+          "start": "2026-03-01T09:56:41"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q52+"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q53+"
+        }
+      ],
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T14:58:59.976166+00:00",
+    "instruction": "Southbound Q52-SBS and Q53-SBS stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave. What's happening? Rockaway Blvd Subway Station Accessibility Upgrades. Plan your trip at mta.info or use the MTA app (download the app for iOS or Android).",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:59d3e789fb4c",
+      "header": "Southbound [Q52-SBS] and [Q53-SBS] stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave. What's happening? Rockaway",
+      "description": "What's happening?\nRockaway Blvd Subway Station Accessibility Upgrades\n\nPlan your trip at mta.info or use the MTA app (download the app for iOS or Android).",
+      "effect": "STOP_MOVED",
+      "cause": "CONSTRUCTION",
+      "active_periods": [
+        {
+          "start": "2026-03-01T09:58:39"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q52+"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q53+"
+        }
+      ],
+      "severity": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T15:30:07.452986+00:00",
+    "instruction": "Southbound Q52-SBS and Q53-SBS stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave. The dates should be from tomorrow 8PM and repeat every monday for 4 weeks at the same time frames, end hour is 10PM.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:5ca92fbb3bb0",
+      "header": "Southbound [Q52-SBS] and [Q53-SBS] stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave.",
+      "description": null,
+      "effect": "STOP_MOVED",
+      "cause": "UNKNOWN_CAUSE",
+      "severity": null,
+      "active_periods": [
+        {
+          "start": "2026-03-02T00:00:00",
+          "end": "2026-03-03T00:00:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q52+",
+          "stop_id": null
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q53+",
+          "stop_id": null
+        }
+      ]
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T15:36:00.616464+00:00",
+    "instruction": "Southbound Q52-SBS and Q53-SBS stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave. The dates should be from tomorrow 8PM and repeat every monday for 4 weeks at the same time frames, end hour is 10PM.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:ec3fc1e721b4",
+      "header": "Southbound [Q52-SBS] and [Q53-SBS] stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave.",
+      "description": null,
+      "effect": "STOP_MOVED",
+      "cause": "UNKNOWN_CAUSE",
+      "severity": null,
+      "active_periods": [
+        {
+          "start": "2026-03-02T20:00:00",
+          "end": "2026-03-02T22:00:00"
+        },
+        {
+          "start": "2026-03-09T20:00:00",
+          "end": "2026-03-09T22:00:00"
+        },
+        {
+          "start": "2026-03-16T20:00:00",
+          "end": "2026-03-16T22:00:00"
+        },
+        {
+          "start": "2026-03-23T20:00:00",
+          "end": "2026-03-23T22:00:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q52+",
+          "stop_id": null
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q53+",
+          "stop_id": null
+        }
+      ]
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T15:38:33.295124+00:00",
+    "instruction": "Southbound Q52-SBS and Q53-SBS stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave. The dates should be from tomorrow 8PM and repeat every monday for 4 weeks at the same time frames, end hour is 10PM.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:1963496c26c3",
+      "header": "Southbound [Q52-SBS] and [Q53-SBS] stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave.",
+      "description": null,
+      "effect": "STOP_MOVED",
+      "cause": "UNKNOWN_CAUSE",
+      "severity": null,
+      "active_periods": [
+        {
+          "start": "2026-03-02T20:00:00",
+          "end": "2026-03-02T22:00:00"
+        },
+        {
+          "start": "2026-03-09T20:00:00",
+          "end": "2026-03-09T22:00:00"
+        },
+        {
+          "start": "2026-03-16T20:00:00",
+          "end": "2026-03-16T22:00:00"
+        },
+        {
+          "start": "2026-03-23T20:00:00",
+          "end": "2026-03-23T22:00:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q52+"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q53+"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T15:55:19.034046+00:00",
+    "instruction": "Southbound BxM11 buses are detouring from E 177th St at Bronx River Parkway to Bruckner Blvd at Bruckner Expy - no stops will be missed",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:b04d101a6bde",
+      "header": "Southbound [BxM11] buses are detouring from E 177th St at Bronx River Parkway to Bruckner Blvd at Bruckner Expy - no stops will be missed",
+      "description": null,
+      "effect": "DETOUR",
+      "cause": "UNKNOWN_CAUSE",
+      "severity": null,
+      "active_periods": [
+        {
+          "start": "2026-03-01T10:55:07"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM11"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T16:15:59.368842+00:00",
+    "instruction": "Southbound BxM11 buses are detouring from E 177th St at Bronx River Parkway to Bruckner Blvd at Bruckner Expy - no stops will be missed",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:a414523eeb9f",
+      "header": "Southbound [BxM11] buses are detouring from E 177th St at Bronx River Parkway to Bruckner Blvd at Bruckner Expy - no stops will be missed",
+      "description": null,
+      "effect": "DETOUR",
+      "cause": "UNKNOWN_CAUSE",
+      "severity": null,
+      "active_periods": [
+        {
+          "start": "2026-03-01T11:15:32"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM11"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "103302"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "150168"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T16:28:55.133891+00:00",
+    "instruction": "Southbound [BxM11] buses are detouring from E 177th St at Bronx River Parkway to Bruckner Blvd at Bruckner Expy - no stops will be missed",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:93b31984aac2",
+      "header": "Southbound [BxM11] buses are detouring from E 177th St at Bronx River Parkway to Bruckner Blvd at Bruckner Expy - no stops will be missed",
+      "description": null,
+      "effect": "DETOUR",
+      "cause": "UNKNOWN_CAUSE",
+      "severity": null,
+      "active_periods": [
+        {
+          "start": "2026-03-01T11:28:33"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM11"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "150168"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T16:29:46.043850+00:00",
+    "instruction": "Southbound Q52-SBS and Q53-SBS stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave. The dates should be from tomorrow 8PM and repeat every monday for 4 weeks at the same time frames, end hour is 10PM.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:dd1b641d4a5c",
+      "header": "Southbound [Q52-SBS] and [Q53-SBS] stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated down the block before 107th Ave",
+      "description": null,
+      "effect": "STOP_MOVED",
+      "cause": "UNKNOWN_CAUSE",
+      "severity": null,
+      "active_periods": [
+        {
+          "start": "2026-03-02T20:00:00",
+          "end": "2026-03-02T22:00:00"
+        },
+        {
+          "start": "2026-03-09T20:00:00",
+          "end": "2026-03-09T22:00:00"
+        },
+        {
+          "start": "2026-03-16T20:00:00",
+          "end": "2026-03-16T22:00:00"
+        },
+        {
+          "start": "2026-03-23T20:00:00",
+          "end": "2026-03-23T22:00:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q52+"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q53+"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "553345"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T16:31:32.449879+00:00",
+    "instruction": "Southbound Q52-SBS and Q53-SBS will not stop at stop id 553345. timeframe is tomorrow 8pm to 11pm.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:009d8195f88d",
+      "header": "Southbound [Q52-SBS] and [Q53-SBS] will not stop at stop id 553345",
+      "description": null,
+      "effect": "STOP_MOVED",
+      "cause": "UNKNOWN_CAUSE",
+      "severity": null,
+      "active_periods": [
+        {
+          "start": "2026-03-02T20:00:00",
+          "end": "2026-03-02T23:00:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q52+"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q53+"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "982075"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T16:50:30.260618+00:00",
+    "instruction": "Southbound Q52-SBS and Q53-SBS will not stop at stop id 553345. timeframe is tomorrow 8pm to 11pm.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:51a95a0f5b92",
+      "header": "Southbound [Q52-SBS] and [Q53-SBS] will not stop at stop id 553345 tomorrow 8-11 PM",
+      "description": null,
+      "effect": "NO_SERVICE",
+      "cause": "UNKNOWN_CAUSE",
+      "severity": null,
+      "active_periods": [
+        {
+          "start": "2026-03-02T20:00:00",
+          "end": "2026-03-02T23:00:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q52+"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q53+"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "553345"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T16:56:45.236726+00:00",
+    "instruction": "Southbound Q52-SBS and Q53-SBS will not stop at stop id 553345. timeframe is tomorrow 8pm to 11pm.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:76128643756d",
+      "header": "Southbound [Q52-SBS] and [Q53-SBS] will not make stops at Cross Bay Blvd At Liberty Av",
+      "description": null,
+      "effect": "NO_SERVICE",
+      "cause": "UNKNOWN_CAUSE",
+      "severity": null,
+      "active_periods": [
+        {
+          "start": "2026-03-02T20:00:00",
+          "end": "2026-03-02T23:00:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q52+"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "Q53+"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "553345"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T17:00:29.590305+00:00",
+    "instruction": "Eastbound M66 stop on W 65th St at Columbus Ave is being bypassed; use the stop on W 65th at Broadway instead. description: See a map of this stop change. What's happening?Building Construction Note: Bus arrival information may not be available/accurate while buses are detoured. Timeframe is from today timestamp until friday 10PM.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:f6b3da436881",
+      "header": "Eastbound [M66] stop on W 65 St/Columbus Av bypassed; use W 65 St/Broadway instead",
+      "description": "See a map of this stop change. What's happening?Building Construction Note: Bus arrival information may not be available/accurate while buses are detoured. Timeframe is from today timestamp until friday 10PM.",
+      "effect": "DETOUR",
+      "cause": "CONSTRUCTION",
+      "severity": null,
+      "active_periods": [
+        {
+          "start": "2026-03-01T00:00:00",
+          "end": "2026-03-02T00:00:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTA NYCT",
+          "route_id": "M66"
+        },
+        {
+          "agency_id": "MTA NYCT",
+          "stop_id": "403489"
+        },
+        {
+          "agency_id": "MTA NYCT",
+          "stop_id": "403510"
+        },
+        {
+          "agency_id": "MTA NYCT",
+          "stop_id": "403573"
+        },
+        {
+          "agency_id": "MTA NYCT",
+          "stop_id": "403491"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T17:06:42.640081+00:00",
+    "instruction": "Eastbound M66 stop on W 65th St at Columbus Ave is being bypassed; use the stop on W 65th at Broadway instead. description: See a map of this stop change. What's happening?Building Construction Note: Bus arrival information may not be available/accurate while buses are detoured. Timeframe is from today timestamp until friday 10PM.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:287d3bec2579",
+      "header": "Eastbound [M66] stop on W 65th St at Columbus Ave bypassed; use W 65th St at Broadway instead",
+      "description": "See a map of this stop change. What's happening?\nBuilding Construction Note: Bus arrival information may not be available/accurate while buses are detoured.",
+      "effect": "DETOUR",
+      "cause": "CONSTRUCTION",
+      "severity": null,
+      "active_periods": [
+        {
+          "start": "2026-03-01T12:06:16",
+          "end": "2026-03-06T22:00:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTA NYCT",
+          "route_id": "M66"
+        },
+        {
+          "agency_id": "MTA NYCT",
+          "stop_id": "403491"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T17:09:42.745642+00:00",
+    "instruction": "Eastbound M66 stop on W 65th St at Columbus Ave is being bypassed; use the stop on W 65th at Broadway instead.  See a map of this stop change. What's happening? Building Construction Note: Bus arrival information may not be available/accurate while buses are detoured. Timeframe is from today timestamp until friday 10PM.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:c18462c061cf",
+      "header": "Eastbound [M66] stop on W 65th St at Columbus Ave is being bypassed; use the stop on W 65th St at Broadway instead. See a map of this stop change",
+      "description": "See a map of this stop change. What's happening?\nBuilding Construction Note: Bus arrival information may not be available/accurate while buses are detoured.",
+      "effect": "DETOUR",
+      "cause": "CONSTRUCTION",
+      "severity": null,
+      "active_periods": [
+        {
+          "start": "2026-03-01T12:09:15",
+          "end": "2026-03-06T22:00:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTA NYCT",
+          "route_id": "M66"
+        },
+        {
+          "agency_id": "MTA NYCT",
+          "stop_id": "403491"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-01T17:18:20.976880+00:00",
+    "instruction": "Eastbound M66 stop on W 65th St at Columbus Ave is being bypassed; use the stop on W 65th at Broadway instead.  See a map of this stop change. What's happening? Building Construction Note: Bus arrival information may not be available/accurate while buses are detoured. Timeframe is from today timestamp until friday 10PM.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:96ceebf74b41",
+      "header": "Eastbound [M66] stop on W 65th St at Columbus Ave is being bypassed; use the stop on W 65th at Broadway instead",
+      "description": "See a map of this stop change. What's happening?\nBuilding Construction Note: Bus arrival information may not be available/accurate while buses are detoured",
+      "effect": "DETOUR",
+      "cause": "CONSTRUCTION",
+      "severity": null,
+      "active_periods": [
+        {
+          "start": "2026-03-01T12:18:00",
+          "end": "2026-03-06T22:00:00"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTA NYCT",
+          "route_id": "M66"
+        },
+        {
+          "agency_id": "MTA NYCT",
+          "stop_id": "403491"
+        }
+      ]
+    }
   }
 ]

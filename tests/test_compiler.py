@@ -13,6 +13,17 @@ def _build_compiler() -> AlertCompiler:
     )
 
 
+def _build_compiler_no_llm() -> AlertCompiler:
+    compiler = _build_compiler()
+    compiler._ensure_llm = lambda: False  # type: ignore[method-assign]
+    compiler.retriever.geocode_fallback_entities = lambda **kwargs: {  # type: ignore[method-assign]
+        "status": "skipped",
+        "entities": [],
+        "confidence": 0.0,
+    }
+    return compiler
+
+
 def test_instruction_only_compile():
     compiler = _build_compiler()
     request = CompileRequest(
@@ -104,3 +115,146 @@ def test_subway_directional_stop_collapses_without_explicit_direction():
     assert "118" in stop_ids
     assert "118N" not in stop_ids
     assert "118S" not in stop_ids
+
+
+def test_freeform_dates_clause_does_not_leak_into_header_and_preserves_stop():
+    compiler = _build_compiler_no_llm()
+    request = CompileRequest(
+        instruction=(
+            "Southbound Q52-SBS and Q53-SBS stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated "
+            "down the block before 107th Ave. The dates should be from tomorrow 8PM and repeat every monday "
+            "for 4 weeks at the same time frames, end hour is 10PM."
+        )
+    )
+
+    compiled = compiler.compile(request)
+    assert "dates should be" not in compiled["header"].lower()
+    assert "what's happening" not in compiled["header"].lower()
+    assert len(compiled["active_periods"]) == 4
+    assert any(e.get("route_id") == "Q52+" for e in compiled["informed_entities"])
+    assert any(e.get("route_id") == "Q53+" for e in compiled["informed_entities"])
+    assert any(e.get("stop_id") == "553345" for e in compiled["informed_entities"])
+
+
+def test_whats_happening_section_is_not_leaked_into_header():
+    compiler = _build_compiler_no_llm()
+    request = CompileRequest(
+        instruction=(
+            "Southbound Q52-SBS and Q53-SBS stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated "
+            "down the block before 107th Ave. What's happening? Rockaway Blvd Subway Station Accessibility Upgrades. "
+            "Plan your trip at mta.info or use the MTA app. Dates: from right now to 2 hours after."
+        )
+    )
+
+    compiled = compiler.compile(request)
+    assert "what's happening" not in compiled["header"].lower()
+    assert "plan your trip" not in compiled["header"].lower()
+    assert any(e.get("stop_id") == "553345" for e in compiled["informed_entities"])
+
+
+def test_natural_text_with_dates_token_does_not_require_directive_parsing():
+    compiler = _build_compiler_no_llm()
+    request = CompileRequest(
+        instruction=(
+            "Eastbound M66 stop on W 65th St at Columbus Ave is being bypassed; "
+            "use the stop on W 65th at Broadway instead. "
+            "The word dates appears naturally here, timeframe is tomorrow 8pm to 11pm."
+        )
+    )
+    compiled = compiler.compile(request)
+
+    assert compiled["header"]
+    assert any(e.get("route_id") == "M66" for e in compiled["informed_entities"])
+    assert compiled["active_periods"] and compiled["active_periods"][0]["start"].endswith("20:00:00")
+
+
+def test_explicit_stop_id_is_hard_locked_when_valid():
+    compiler = _build_compiler_no_llm()
+    request = CompileRequest(
+        instruction=(
+            "Southbound Q52-SBS and Q53-SBS will not stop at stop id 553345. "
+            "timeframe is tomorrow 8pm to 11pm."
+        )
+    )
+
+    compiled = compiler.compile(request)
+    stop_ids = {e.get("stop_id") for e in compiled["informed_entities"] if e.get("stop_id")}
+    assert "553345" in stop_ids
+    assert "982075" not in stop_ids
+    assert "stop id 553345" not in compiled["header"].lower()
+    assert "cross bay" in compiled["header"].lower()
+    assert any(e.get("route_id") == "Q52+" for e in compiled["informed_entities"])
+    assert any(e.get("route_id") == "Q53+" for e in compiled["informed_entities"])
+
+
+def test_invalid_explicit_stop_id_is_dropped():
+    compiler = _build_compiler_no_llm()
+    request = CompileRequest(
+        instruction=(
+            "Southbound Q52-SBS and Q53-SBS will not stop at stop id 9999999. "
+            "timeframe is tomorrow 8pm to 11pm."
+        )
+    )
+    compiled = compiler.compile(request)
+
+    stop_ids = {e.get("stop_id") for e in compiled["informed_entities"] if e.get("stop_id")}
+    assert "9999999" not in stop_ids
+
+
+def test_freeform_timeframe_is_not_leaked_to_header():
+    compiler = _build_compiler_no_llm()
+    request = CompileRequest(
+        instruction="Southbound B20 buses are detoured on Decatur St at Wilson Ave, timeframe is tomorrow 8pm to 11pm."
+    )
+    compiled = compiler.compile(request)
+    assert "timeframe is" not in compiled["header"].lower()
+
+
+def test_m66_bypass_uses_single_affected_stop_and_until_friday_window():
+    compiler = _build_compiler_no_llm()
+    request = CompileRequest(
+        instruction=(
+            "Eastbound M66 stop on W 65th St at Columbus Ave is being bypassed; "
+            "use the stop on W 65th at Broadway instead. "
+            "description: See a map of this stop change. What's happening?Building Construction Note: "
+            "Bus arrival information may not be available/accurate while buses are detoured. "
+            "Timeframe is from today timestamp until friday 10PM."
+        )
+    )
+    compiled = compiler.compile(request)
+
+    assert compiled["header"].startswith("Eastbound [M66] stop on W 65th St at Columbus Ave is being bypassed")
+    assert "description:" not in compiled["header"].lower()
+    assert "timeframe is" not in (compiled.get("description") or "").lower()
+    stop_ids = [e.get("stop_id") for e in compiled["informed_entities"] if e.get("stop_id")]
+    assert stop_ids == ["403573"]
+    assert compiled["active_periods"] and compiled["active_periods"][0]["end"].endswith("22:00:00")
+
+
+def test_m66_alternative_stop_phrase_does_not_override_affected_stop():
+    compiler = _build_compiler_no_llm()
+    request = CompileRequest(
+        instruction=(
+            "Eastbound M66 stop on W 65th St at Columbus Ave is being bypassed; "
+            "use the stop on W 65th at Broadway instead. "
+            "See a map of this stop change. Timeframe is from today timestamp until friday 10PM."
+        )
+    )
+    compiled = compiler.compile(request)
+    stop_ids = [e.get("stop_id") for e in compiled["informed_entities"] if e.get("stop_id")]
+    assert stop_ids == ["403573"]
+    assert "see a map" not in compiled["header"].lower()
+
+
+def test_m66_mixed_single_clause_still_selects_columbus_affected_stop():
+    compiler = _build_compiler_no_llm()
+    request = CompileRequest(
+        instruction=(
+            "Eastbound M66 stop on W 65th St at Columbus Ave is being bypassed, "
+            "use the stop on W 65th at Broadway instead. "
+            "Timeframe is from today timestamp until friday 10PM."
+        )
+    )
+    compiled = compiler.compile(request)
+    stop_ids = [e.get("stop_id") for e in compiled["informed_entities"] if e.get("stop_id")]
+    assert stop_ids == ["403573"]

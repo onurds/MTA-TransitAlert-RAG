@@ -63,6 +63,7 @@ async def healthz():
         "graph_path": GRAPH_PATH,
         "calendar_path": CALENDAR_PATH,
         "confidence_threshold": CONFIDENCE_THRESHOLD,
+        "telemetry": dict(engine.compiler.telemetry),
     }
 
 

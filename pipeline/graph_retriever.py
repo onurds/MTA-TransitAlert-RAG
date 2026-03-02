@@ -49,6 +49,10 @@ AFFECTED_LINE_MARKERS = (
 )
 
 _LOCATION_PATTERNS = [
+    re.compile(
+        r"\bon\s+([A-Za-z0-9\-\./&' ]+?)\s+at\s+([A-Za-z0-9\-\./&' ]+?)(?=\.|,|;|\n|$|\b(?:has|have|is|are|was|were|will)\b)",
+        re.IGNORECASE,
+    ),
     re.compile(r"\bat\s+([A-Za-z0-9\-\./&' ]+?)(?=\.|,|;|\n|$)", re.IGNORECASE),
     re.compile(
         r"\bbetween\s+([A-Za-z0-9\-\./&' ]+?)\s+and\s+([A-Za-z0-9\-\./&' ]+?)(?=\.|,|;|\n|$)",
@@ -92,6 +96,9 @@ class GraphRetriever:
         self.route_nodes_by_id: Dict[str, List[str]] = {}
         self.route_agency_by_node: Dict[str, str] = {}
         self._build_route_indexes()
+        self.stop_nodes_by_id: Dict[str, List[str]] = {}
+        self.stop_agency_by_id: Dict[str, str] = {}
+        self._build_stop_indexes()
 
         self._stop_coords: Optional[np.ndarray] = None
         self._stop_tree_nodes: List[str] = []
@@ -104,6 +111,9 @@ class GraphRetriever:
         self,
         alert_text: str,
         seed_entities: Optional[List[Dict[str, Any]]] = None,
+        route_ids_override: Optional[Sequence[str]] = None,
+        location_hints_override: Optional[Sequence[str]] = None,
+        max_stop_candidates: int = 20,
     ) -> Dict[str, Any]:
         text = (alert_text or "").strip()
         if not text:
@@ -119,12 +129,17 @@ class GraphRetriever:
             }
 
         affected_segments, alternative_segments = self._split_affected_and_alternative_segments(text)
-        route_ids = self._extract_route_ids(
-            text,
-            seed_entities=seed_entities,
-            affected_segments=affected_segments,
-            alternative_segments=alternative_segments,
-        )
+        if route_ids_override:
+            route_ids = self.validate_route_ids(route_ids_override)
+            if seed_entities:
+                route_ids = self._dedupe_route_ids(route_ids + self._routes_from_seed(seed_entities))
+        else:
+            route_ids = self._extract_route_ids(
+                text,
+                seed_entities=seed_entities,
+                affected_segments=affected_segments,
+                alternative_segments=alternative_segments,
+            )
         if not route_ids:
             return {
                 "status": "error",
@@ -132,13 +147,19 @@ class GraphRetriever:
                 "informed_entities": self._seed_route_entities(seed_entities),
                 "route_confidence": 0.0,
                 "stop_confidence": 0.0,
-                "location_hints": self._extract_location_hints(text),
+                "location_hints": self._merge_location_hints(
+                    self._extract_location_hints(text),
+                    location_hints_override,
+                ),
                 "fallback_needed": True,
                 "route_ids": [],
             }
 
         route_choices: List[RouteChoice] = []
-        location_hints = self._extract_location_hints(text)
+        location_hints = self._merge_location_hints(
+            self._extract_location_hints(text),
+            location_hints_override,
+        )
 
         for route_id in route_ids:
             route_choice = self._choose_route_node(
@@ -196,6 +217,16 @@ class GraphRetriever:
                 )
                 stop_scores.append(score)
 
+        # Keep highest-scoring stop candidates only; avoids noisy tails in downstream LLM selection.
+        stop_candidates.sort(key=lambda c: float(c.get("score", 0.0)), reverse=True)
+        stop_candidates = stop_candidates[: max(1, int(max_stop_candidates))]
+
+        selected_stop_ids = {str(c.get("stop_id", "")).upper() for c in stop_candidates if c.get("stop_id")}
+        matched_stop_entities = [
+            e
+            for e in matched_stop_entities
+            if str(e.get("stop_id", "")).upper() in selected_stop_ids
+        ]
         informed_entities = self._dedupe_entities(informed_entities + matched_stop_entities)
 
         route_confidence = min(1.0, 0.7 + 0.3 * (len(route_choices) / max(1, len(route_ids))))
@@ -294,6 +325,23 @@ class GraphRetriever:
         for rid in self.route_nodes_by_id:
             self.route_nodes_by_id[rid].sort()
 
+    def _build_stop_indexes(self) -> None:
+        self.stop_nodes_by_id.clear()
+        self.stop_agency_by_id.clear()
+
+        for node, attrs in self.G.nodes(data=True):
+            if attrs.get("type") != "Stop":
+                continue
+            stop_id = self.to_public_stop_id(node)
+            self.stop_nodes_by_id.setdefault(stop_id, []).append(node)
+
+            namespace = self._namespace_from_node(node)
+            agency_id = AGENCY_ID_BY_GTFS_NAMESPACE.get(namespace, "MTA NYCT")
+            self.stop_agency_by_id.setdefault(stop_id, agency_id)
+
+        for sid in self.stop_nodes_by_id:
+            self.stop_nodes_by_id[sid].sort()
+
     @staticmethod
     def _namespace_from_node(node_id: str) -> str:
         if not node_id or "_" not in node_id:
@@ -320,6 +368,67 @@ class GraphRetriever:
             t = t[:-3] + "+"
         t = t.replace("-", "")
         return t
+
+    @staticmethod
+    def _normalize_stop_token(token: str) -> str:
+        t = str(token or "").strip().upper()
+        return t.strip("[](){}.,;:#")
+
+    def normalize_route_id(self, token: str) -> str:
+        return self._normalize_route_token(token)
+
+    def normalize_stop_id(self, token: str) -> str:
+        return self._normalize_stop_token(token)
+
+    def is_valid_route_id(self, route_id: str) -> bool:
+        return self.normalize_route_id(route_id) in self.route_nodes_by_id
+
+    def is_valid_stop_id(self, stop_id: str) -> bool:
+        return self.normalize_stop_id(stop_id) in self.stop_nodes_by_id
+
+    def validate_route_ids(self, route_ids: Sequence[str]) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for token in route_ids or []:
+            rid = self.normalize_route_id(token)
+            if not rid or rid in seen:
+                continue
+            if rid in self.route_nodes_by_id:
+                seen.add(rid)
+                out.append(rid)
+        return out
+
+    def validate_stop_ids(self, stop_ids: Sequence[str]) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for token in stop_ids or []:
+            sid = self.normalize_stop_id(token)
+            if not sid or sid in seen:
+                continue
+            if sid in self.stop_nodes_by_id:
+                seen.add(sid)
+                out.append(sid)
+        return out
+
+    def agency_for_route_id(self, route_id: str) -> str:
+        rid = self.normalize_route_id(route_id)
+        nodes = self.route_nodes_by_id.get(rid, [])
+        if not nodes:
+            return "MTA NYCT"
+        return self.route_agency_by_node.get(nodes[0], "MTA NYCT")
+
+    def agency_for_stop_id(self, stop_id: str) -> str:
+        sid = self.normalize_stop_id(stop_id)
+        return self.stop_agency_by_id.get(sid, "MTA NYCT")
+
+    def stop_name_for_id(self, stop_id: str) -> Optional[str]:
+        sid = self.normalize_stop_id(stop_id)
+        nodes = self.stop_nodes_by_id.get(sid, [])
+        if not nodes:
+            return None
+        attrs = self.G.nodes.get(nodes[0], {})
+        name = str(attrs.get("name", "")).strip()
+        return name or None
 
     def _extract_route_ids(
         self,
@@ -380,6 +489,28 @@ class GraphRetriever:
             deduped.append(route_id)
 
         return deduped
+
+    @staticmethod
+    def _dedupe_route_ids(route_ids: Sequence[str]) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for rid in route_ids:
+            token = str(rid or "").strip().upper()
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            out.append(token)
+        return out
+
+    def _routes_from_seed(self, seed_entities: Sequence[Dict[str, Any]]) -> List[str]:
+        out: List[str] = []
+        for e in seed_entities or []:
+            if not isinstance(e, dict):
+                continue
+            rid = self.normalize_route_id(str(e.get("route_id", "")))
+            if rid in self.route_nodes_by_id:
+                out.append(rid)
+        return self._dedupe_route_ids(out)
 
     @staticmethod
     def _route_tokens_from_text(text: str) -> List[str]:
@@ -520,7 +651,7 @@ class GraphRetriever:
                     self._stop_matches_hint_constraint(stop_name, c) for c in hint_constraints
                 ):
                     continue
-                hint_score = self._best_segment_match_score(stop_name, location_hints)
+                hint_score = self._hint_match_score(stop_name, location_hints)
                 alt_score = self._best_segment_match_score(stop_name, alternative_segments)
                 if hint_score < 0.62:
                     continue
@@ -555,7 +686,7 @@ class GraphRetriever:
                     self._stop_matches_hint_constraint(stop_name, c) for c in hint_constraints
                 ):
                     continue
-                hint_score = self._best_segment_match_score(stop_name, location_hints)
+                hint_score = self._hint_match_score(stop_name, location_hints)
                 if hint_score >= 0.52:
                     matches.append((stop_id, stop_name, hint_score))
 
@@ -618,16 +749,42 @@ class GraphRetriever:
 
     @staticmethod
     def _split_affected_and_alternative_segments(text: str) -> Tuple[List[str], List[str]]:
-        parts = [p.strip() for p in re.split(r"[\n\r\.]+", text or "") if p.strip()]
+        # Split on sentence boundaries and semicolons so affected and alternative
+        # clauses in one line (e.g., "...bypassed; use ... instead") separate.
+        parts = [p.strip() for p in re.split(r"[\n\r\.;]+", text or "") if p.strip()]
         affected: List[str] = []
         alternative: List[str] = []
 
         for part in parts:
             lower = part.lower()
-            if any(marker in lower for marker in ALT_LINE_MARKERS):
+            has_alt = any(marker in lower for marker in ALT_LINE_MARKERS)
+            has_affected = any(marker in lower for marker in AFFECTED_LINE_MARKERS)
+
+            # Mixed clauses often appear as one line in LLM-rewritten text
+            # ("...is being bypassed, use ... instead"). Split by first
+            # alternative cue so affected and alternative matching are scoped.
+            if has_alt and has_affected:
+                split_match = re.search(
+                    r"\b(?:use\s+the\s+stop|use\s+stops|take\s+the|instead)\b",
+                    lower,
+                )
+                if split_match:
+                    split_idx = split_match.start()
+                    left = part[:split_idx].strip(" ,;:-")
+                    right = part[split_idx:].strip(" ,;:-")
+                    if left:
+                        affected.append(left)
+                    if right:
+                        alternative.append(right)
+                    continue
+                # If no reliable split point exists, keep as affected context
+                # and avoid alternative-only classification.
+                affected.append(part)
+                continue
+            if has_alt:
                 alternative.append(part)
                 continue
-            if any(marker in lower for marker in AFFECTED_LINE_MARKERS):
+            if has_affected:
                 affected.append(part)
                 continue
             # Neutral lines are useful context for affected scope.
@@ -636,17 +793,120 @@ class GraphRetriever:
         return affected, alternative
 
     @staticmethod
+    def _clean_location_hint(hint: str) -> str:
+        txt = re.sub(r"\*{1,3}|_{1,3}", "", hint or "").strip()
+        if not txt:
+            return ""
+
+        # Keep the intersection phrase, drop trailing action clauses.
+        txt = re.split(r"\b(?:has|have|had|is|are|was|were|will|would|should|can|could|may|might|must)\b", txt, 1, flags=re.IGNORECASE)[0]
+        txt = re.sub(r"\s*-\s*no\s+stops?.*$", "", txt, flags=re.IGNORECASE).strip()
+        txt = re.sub(r"\bno\s+stops?\s+will\s+be\s+missed\b.*$", "", txt, flags=re.IGNORECASE).strip()
+        txt = re.sub(r"\bno\s+stops?\b.*$", "", txt, flags=re.IGNORECASE).strip()
+
+        # Remove common location lead-ins only at the beginning.
+        txt = re.sub(r"^(?:the\s+)?(?:stop\s+on|stops?\s+on|on|at|near)\s+", "", txt, flags=re.IGNORECASE).strip()
+
+        # Normalize connectors and collapse spaces.
+        txt = txt.replace(" & ", " and ")
+        txt = re.sub(r"\s{2,}", " ", txt).strip(" ,.;:-")
+        return txt
+
+    @staticmethod
+    def _looks_like_location_hint(hint: str) -> bool:
+        txt = (hint or "").strip().lower()
+        if not txt:
+            return False
+
+        # These usually come from malformed captures like
+        # "Bronx River Parkway to Bruckner Blvd at ...", which should be split
+        # by other patterns and not geocoded as a single hint.
+        if " to " in txt:
+            return False
+        if "no stop" in txt:
+            return False
+
+        temporal_tokens = (
+            "today",
+            "tomorrow",
+            "tonight",
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+            "am",
+            "pm",
+            "hour",
+            "hours",
+            "minute",
+            "minutes",
+            "week",
+            "weeks",
+            "time frame",
+            "time frames",
+        )
+        if any(tok in txt for tok in temporal_tokens):
+            return False
+
+        road_markers = (
+            " st",
+            " street",
+            " ave",
+            " avenue",
+            " blvd",
+            " boulevard",
+            " rd",
+            " road",
+            " pkwy",
+            " parkway",
+            " dr",
+            " drive",
+            " ln",
+            " lane",
+            " pl",
+            " place",
+            " expy",
+            " expressway",
+            " hwy",
+            " highway",
+            " station",
+            " terminal",
+        )
+        if any(marker in f" {txt}" for marker in road_markers):
+            return True
+
+        # Ordinal street references like "96th" / "110th".
+        return bool(re.search(r"\b\d{1,3}(?:st|nd|rd|th)\b", txt))
+
+    def _hint_match_score(self, stop_name: str, location_hints: Sequence[str]) -> float:
+        if not location_hints:
+            return 0.0
+
+        per_hint_scores = [self._best_segment_match_score(stop_name, [hint]) for hint in location_hints]
+        if not per_hint_scores:
+            return 0.0
+        ranked = sorted(per_hint_scores, reverse=True)
+        best = ranked[0]
+        # Reward stops that also match the secondary street token.
+        if len(ranked) > 1:
+            best += 0.25 * ranked[1]
+        return min(1.0, best)
+
+    @staticmethod
     def _extract_location_hints(text: str) -> List[str]:
         hints: List[str] = []
         for pattern in _LOCATION_PATTERNS:
             for match in pattern.findall(text or ""):
                 if isinstance(match, tuple):
-                    pieces = [m.strip() for m in match if m and m.strip()]
-                    hints.extend(pieces)
+                    pieces = [GraphRetriever._clean_location_hint(m) for m in match if m and str(m).strip()]
+                    for piece in pieces:
+                        hints.extend(GraphRetriever._expand_location_hint(piece))
                 else:
-                    candidate = match.strip()
-                    if candidate:
-                        hints.append(candidate)
+                    candidate = GraphRetriever._clean_location_hint(match)
+                    hints.extend(GraphRetriever._expand_location_hint(candidate))
 
         # Preserve order and dedupe.
         deduped: List[str] = []
@@ -658,6 +918,42 @@ class GraphRetriever:
             seen.add(key)
             deduped.append(hint)
         return deduped
+
+    @staticmethod
+    def _merge_location_hints(
+        extracted_hints: Sequence[str],
+        override_hints: Optional[Sequence[str]],
+    ) -> List[str]:
+        merged: List[str] = []
+        seen = set()
+        for raw in list(extracted_hints or []) + list(override_hints or []):
+            hint = GraphRetriever._clean_location_hint(str(raw or ""))
+            for expanded in GraphRetriever._expand_location_hint(hint):
+                key = expanded.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(expanded)
+        return merged
+
+    @staticmethod
+    def _expand_location_hint(hint: str) -> List[str]:
+        txt = GraphRetriever._clean_location_hint(hint)
+        if not txt:
+            return []
+        if GraphRetriever._looks_like_location_hint(txt):
+            return [txt]
+        # Support "from A to B" style captures by splitting into two location
+        # hints instead of dropping the whole phrase.
+        if " to " in txt.lower():
+            parts = [GraphRetriever._clean_location_hint(p) for p in re.split(r"\bto\b", txt, maxsplit=1, flags=re.IGNORECASE)]
+            out: List[str] = []
+            for part in parts:
+                if part and GraphRetriever._looks_like_location_hint(part):
+                    out.append(part)
+            if out:
+                return out
+        return []
 
     @staticmethod
     def _has_stop_indication(text: str, location_hints: Sequence[str]) -> bool:

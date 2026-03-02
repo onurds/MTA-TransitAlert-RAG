@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
@@ -77,6 +77,19 @@ class ParsedInstruction:
     effect_override: Optional[str]
 
 
+@dataclass(frozen=True)
+class IntentParseResult:
+    alert_text: Optional[str]
+    temporal_text: Optional[str]
+    explicit_route_ids: Tuple[str, ...] = field(default_factory=tuple)
+    explicit_stop_ids: Tuple[str, ...] = field(default_factory=tuple)
+    location_phrases: Tuple[str, ...] = field(default_factory=tuple)
+    effect_hint: Optional[str] = None
+    cause_hint: Optional[str] = None
+    style_intent: Optional[str] = None
+    parse_confidence: float = 0.0
+
+
 class AlertCompiler:
     def __init__(
         self,
@@ -99,132 +112,224 @@ class AlertCompiler:
         self._llm_config = load_llm_config()
         self._llm_config_active = self._llm_config
         self.llm = None
+        self.telemetry: Dict[str, int] = {
+            "parse_fail": 0,
+            "explicit_id_invalid_drop": 0,
+            "fallback_used": 0,
+            "inferred_stop_accept": 0,
+        }
 
     def compile(self, request: CompileRequest) -> Dict[str, Any]:
         self._set_request_llm_config(request.llm_provider, request.llm_model)
 
         base_alert = request.alert
-        instruction = (request.instruction or "").strip()
-        parsed = self._parse_instruction(instruction)
+        instruction = self._strip_markdown_formatting((request.instruction or "").strip())
+        directive_hint = ParsedInstruction(None, None, None, None, None)
+        intent = self._parse_intent_llm_first(instruction, directive_hint)
 
         base_header = (base_alert.header if base_alert else "") or ""
         base_description = (base_alert.description if base_alert else "") or ""
 
-        header = parsed.header or base_header
-        description = parsed.description or base_description
+        header = (
+            intent.alert_text
+            or base_header
+            or self._derive_header_from_text(self._strip_directive_clauses(instruction))
+        )
+        description = base_description
+        header = self._clean_header_text(header)
 
         if not header and not description:
             if instruction:
-                cleaned_instruction = self._strip_directive_clauses(instruction)
+                header = self._derive_header_from_text(self._strip_directive_clauses(instruction))
                 description = ""
-                header = self._derive_header_from_text(cleaned_instruction)
             else:
                 raise ValueError("Either instruction text or alert header/description must be provided.")
 
+        # Temporal resolution: LLM intent -> deterministic resolver.
         active_periods = self._normalize_active_periods(base_alert.active_periods if base_alert else [])
-        temporal_text = parsed.dates_text or instruction or f"{header}\n{description}"
-        temporal_override = bool(parsed.dates_text) or self._has_temporal_hint(instruction)
+        temporal_text = intent.temporal_text or instruction or f"{header}\n{description}"
+        temporal_override = bool(intent.temporal_text or self._has_temporal_hint(instruction))
         temporal_confidence = 0.4
 
-        resolved_period = None
+        resolved_periods: List[Dict[str, Any]] = []
         if self.temporal_resolver:
-            resolved_period = self.temporal_resolver.resolve(temporal_text)
+            for p in self.temporal_resolver.resolve_all(temporal_text):
+                resolved_periods.append({"start": p.start, "end": p.end})
 
-        if temporal_override and resolved_period:
-            active_periods = [{"start": resolved_period.start, "end": resolved_period.end}]
+        if temporal_override and resolved_periods:
+            active_periods = resolved_periods
             temporal_confidence = 0.98
         elif active_periods:
             temporal_confidence = 0.9
-        elif resolved_period:
-            active_periods = [{"start": resolved_period.start, "end": resolved_period.end}]
+        elif resolved_periods:
+            active_periods = resolved_periods
             temporal_confidence = 0.9
         else:
             now_iso = datetime.now(self.tz).strftime("%Y-%m-%dT%H:%M:%S")
             active_periods = [{"start": now_iso}]
             temporal_confidence = 0.4
 
+        explicit_route_ids = self.retriever.validate_route_ids(intent.explicit_route_ids)
+        explicit_stop_ids = self.retriever.validate_stop_ids(intent.explicit_stop_ids)
+        dropped_explicit = max(0, len(intent.explicit_stop_ids) - len(explicit_stop_ids))
+        if dropped_explicit:
+            self._bump_telemetry("explicit_id_invalid_drop", dropped_explicit)
+
+        explicit_route_entities = [self._build_route_entity(rid) for rid in explicit_route_ids]
+        explicit_stop_entities = [self._build_stop_entity(sid) for sid in explicit_stop_ids]
+
         seed_entities = [e.model_dump(exclude_none=True) for e in (base_alert.informed_entities if base_alert else [])]
-        retriever_text = "\n".join(x for x in [header, description, instruction] if x).strip()
-        retrieval = self.retriever.retrieve_affected_entities(retriever_text, seed_entities=seed_entities)
+        seed_entities = self._dedupe_entities(seed_entities + explicit_route_entities + explicit_stop_entities)
+
+        affected_segments, alternative_segments = self.retriever._split_affected_and_alternative_segments(instruction)
+        affected_hints = self.retriever._extract_location_hints(". ".join(affected_segments))
+        alternative_hints = {h.lower() for h in self.retriever._extract_location_hints(". ".join(alternative_segments))}
+        intent_hints = [h for h in intent.location_phrases if str(h).strip().lower() not in alternative_hints]
+        location_hints_override = self._merge_text_tokens(affected_hints, intent_hints)
+
+        retriever_text = (instruction or "").strip() or "\n".join(
+            x for x in [header, description, instruction] if x
+        ).strip()
+        retrieval = self.retriever.retrieve_affected_entities(
+            retriever_text,
+            seed_entities=seed_entities,
+            route_ids_override=explicit_route_ids or None,
+            location_hints_override=location_hints_override or None,
+            max_stop_candidates=20,
+        )
 
         retrieved_entities = retrieval.get("informed_entities", []) if retrieval.get("status") == "success" else []
-        if retrieved_entities:
-            informed_entities = self._dedupe_entities(retrieved_entities)
-        else:
-            informed_entities = self._dedupe_entities(seed_entities)
-
-        route_entities = [e for e in informed_entities if e.get("route_id") and not e.get("stop_id")]
-        stop_entities = [e for e in informed_entities if e.get("stop_id")]
+        inferred_route_entities = [e for e in retrieved_entities if e.get("route_id") and not e.get("stop_id")]
+        inferred_stop_entities = [e for e in retrieved_entities if e.get("stop_id")]
         stop_candidates = retrieval.get("stop_candidates", []) if retrieval.get("status") == "success" else []
 
-        llm_stop_conf = 0.0
-        if stop_candidates and self._ensure_llm():
-            llm_selected_stops, llm_stop_conf = self._llm_select_stops(
+        allowed_route_ids = self._merge_unique_tokens(
+            explicit_route_ids,
+            retrieval.get("route_ids", []),
+            [e.get("route_id") for e in inferred_route_entities if e.get("route_id")],
+        )
+        llm_route_ids: List[str] = []
+        llm_stop_ids: List[str] = []
+        llm_entity_conf = 0.0
+        if self._ensure_llm() and (allowed_route_ids or stop_candidates):
+            llm_route_ids, llm_stop_ids, llm_entity_conf = self._llm_select_entities(
                 text="\n".join([header, description, instruction]).strip(),
-                route_entities=route_entities,
+                allowed_route_ids=allowed_route_ids,
                 stop_candidates=stop_candidates,
+                locked_route_ids=explicit_route_ids,
+                locked_stop_ids=explicit_stop_ids,
                 location_hints=retrieval.get("location_hints", []),
             )
-            if llm_selected_stops and llm_stop_conf >= 0.7:
-                stop_entities = llm_selected_stops
 
-        stop_entities = self._prune_stops_for_single_location(
-            stop_entities=stop_entities,
-            source_text="\n".join([header, description, instruction]).strip(),
+        if llm_stop_ids and llm_entity_conf >= 0.65:
+            self._bump_telemetry("inferred_stop_accept", len(llm_stop_ids))
+
+        # Explicit stop IDs are hard-locked; inferred stops cannot replace them.
+        locked_stop_ids = {sid.upper() for sid in explicit_stop_ids}
+        if locked_stop_ids:
+            filtered_inferred_stops = [e for e in inferred_stop_entities if str(e.get("stop_id", "")).upper() in locked_stop_ids]
+            inferred_stop_entities = filtered_inferred_stops
+        elif llm_stop_ids and llm_entity_conf >= 0.65:
+            inferred_stop_entities = [self._build_stop_entity(sid) for sid in llm_stop_ids]
+
+        inferred_stop_entities = self._prune_stops_for_single_location(
+            stop_entities=inferred_stop_entities,
+            source_text="\n".join([header, description]).strip() or header,
             stop_candidates=stop_candidates,
         )
 
+        route_entities = self._dedupe_entities(
+            explicit_route_entities
+            + inferred_route_entities
+            + [self._build_route_entity(rid) for rid in llm_route_ids]
+        )
+        stop_entities = self._dedupe_entities(explicit_stop_entities + inferred_stop_entities)
         informed_entities = self._dedupe_entities(route_entities + stop_entities)
-
         informed_entities = self._normalize_entities_for_output(
             informed_entities,
             "\n".join([header, description, instruction]),
         )
 
         route_conf = float(retrieval.get("route_confidence", 0.0))
-        stop_conf = max(float(retrieval.get("stop_confidence", 0.0)), llm_stop_conf)
+        stop_conf = float(retrieval.get("stop_confidence", 0.0))
+        if explicit_route_ids:
+            route_conf = max(route_conf, 0.95)
+        if explicit_stop_ids:
+            stop_conf = max(stop_conf, 1.0)
+        elif llm_entity_conf >= 0.65 and llm_stop_ids:
+            stop_conf = max(stop_conf, llm_entity_conf)
         if not route_conf and informed_entities:
             route_conf = 0.75
 
         base_cause = normalize_cause(base_alert.cause if base_alert else UNKNOWN_CAUSE)
         base_effect = normalize_effect(base_alert.effect if base_alert else UNKNOWN_EFFECT)
+        cause_override = intent.cause_hint
+        effect_override = intent.effect_hint
 
         cause, effect, cause_conf, effect_conf = self._resolve_cause_effect(
             text="\n".join([header, description, instruction]).strip(),
             base_cause=base_cause,
             base_effect=base_effect,
-            cause_override=parsed.cause_override,
-            effect_override=parsed.effect_override,
+            cause_override=cause_override,
+            effect_override=effect_override,
         )
 
         schema_conf = 1.0
         confidence = self._global_confidence(route_conf, stop_conf, temporal_confidence, schema_conf)
 
         should_try_fallback = bool(retrieval.get("fallback_needed", False)) or (confidence < self.confidence_threshold)
+        fallback_used = False
+        fallback_conf = 0.0
         if should_try_fallback:
             fallback = self.retriever.geocode_fallback_entities(
                 location_hints=retrieval.get("location_hints", []),
                 route_ids=[e.get("route_id") for e in informed_entities if e.get("route_id")],
             )
             if fallback.get("status") == "success":
-                informed_entities = self._dedupe_entities(informed_entities + fallback.get("entities", []))
+                fallback_used = True
+                self._bump_telemetry("fallback_used")
+                fallback_conf = float(fallback.get("confidence", 0.0))
+                fallback_entities = fallback.get("entities", [])
+                if explicit_stop_ids:
+                    # Never replace explicit validated stop IDs.
+                    fallback_entities = [
+                        e for e in fallback_entities if str(e.get("stop_id", "")).upper() in locked_stop_ids
+                    ]
+                informed_entities = self._dedupe_entities(informed_entities + fallback_entities)
                 stop_conf = max(stop_conf, float(fallback.get("confidence", 0.0)))
                 confidence = self._global_confidence(route_conf, stop_conf, temporal_confidence, schema_conf)
 
         # Conservative guardrail when confidence remains below threshold.
-        if confidence < self.confidence_threshold:
+        preserve_stops = self._should_preserve_stops_under_low_confidence(
+            entities=informed_entities,
+            stop_conf=stop_conf,
+            retrieval=retrieval,
+            fallback_used=fallback_used,
+            fallback_conf=fallback_conf,
+        )
+        if confidence < self.confidence_threshold and not preserve_stops and not explicit_stop_ids:
             informed_entities = self._conservative_entities(informed_entities, seed_entities)
 
         route_ids_for_text = [e.get("route_id") for e in informed_entities if isinstance(e, dict) and e.get("route_id")]
+        header = self._replace_stop_ids_with_names(header, informed_entities)
+        header = self.description_generator.render_header_mta(
+            llm=self.llm if self._ensure_llm() else None,
+            header=header,
+            source_text=instruction,
+            route_ids=route_ids_for_text,
+            effect=effect,
+            style_intent=intent.style_intent,
+        )
+        header = self._clean_header_text(header)
         header = self._format_route_bullets(header, route_ids_for_text)
         if not (header or "").strip():
             fallback_header = (
-                (parsed.header or "").strip()
+                (intent.alert_text or "").strip()
                 or (base_header or "").strip()
                 or self._derive_header_from_text(self._strip_directive_clauses(instruction))
                 or self._derive_header_from_text(instruction)
             )
-            header = fallback_header.strip()
+            header = self._format_route_bullets(self._clean_header_text(fallback_header).strip(), route_ids_for_text)
         if not header:
             raise ValueError("Unable to derive a non-empty header from the request.")
 
@@ -239,6 +344,7 @@ class AlertCompiler:
         )
         description = generated_description
         if description:
+            description = self._replace_stop_ids_with_names(description, informed_entities)
             description = self._format_route_bullets(description, route_ids_for_text)
 
         alert_id = self._resolve_alert_id(base_alert.id if base_alert else None, header, description)
@@ -254,9 +360,19 @@ class AlertCompiler:
             informed_entities=[InformedEntity(**e) for e in informed_entities],
         )
 
-        data = payload.model_dump(exclude_none=True)
-        data.setdefault("description", None)
-        data.setdefault("severity", None)
+        # exclude_none=True keeps nested objects clean (no stop_id:null, end:null).
+        # Top-level nullable fields (description, severity) are re-inserted explicitly.
+        dumped = payload.model_dump(exclude_none=True)
+        data = {
+            "id": dumped["id"],
+            "header": dumped["header"],
+            "description": dumped.get("description", None),
+            "effect": dumped["effect"],
+            "cause": dumped["cause"],
+            "severity": dumped.get("severity", None),
+            "active_periods": dumped["active_periods"],
+            "informed_entities": dumped["informed_entities"],
+        }
         return data
 
     # ------------------------------------------------------------------
@@ -367,45 +483,50 @@ class AlertCompiler:
         except Exception:
             return {}
 
-    def _llm_select_stops(
+    def _llm_select_entities(
         self,
         text: str,
-        route_entities: Sequence[Dict[str, Any]],
+        allowed_route_ids: Sequence[str],
         stop_candidates: Sequence[Dict[str, Any]],
+        locked_route_ids: Sequence[str],
+        locked_stop_ids: Sequence[str],
         location_hints: Sequence[str],
-    ) -> Tuple[List[Dict[str, Any]], float]:
+    ) -> Tuple[List[str], List[str], float]:
         if not self._ensure_llm():
-            return [], 0.0
+            return [], [], 0.0
 
-        route_ids = [str(e.get("route_id", "")).upper() for e in route_entities if e.get("route_id")]
-        allowed_stop_ids = []
+        allowed_routes = self._merge_unique_tokens(allowed_route_ids)
+        allowed_stop_ids: List[str] = []
         pretty_candidates = []
         for c in stop_candidates:
-            stop_id = str(c.get("stop_id", "")).upper()
+            stop_id = str(c.get("stop_id", "")).upper().strip()
+            route_id = str(c.get("route_id", "")).upper().strip()
             if not stop_id:
                 continue
             allowed_stop_ids.append(stop_id)
             pretty_candidates.append(
                 {
                     "stop_id": stop_id,
-                    "route_id": str(c.get("route_id", "")).upper(),
+                    "route_id": route_id,
                     "stop_name": str(c.get("stop_name", "")),
                     "score": c.get("score", 0.0),
                 }
             )
-        if not pretty_candidates:
-            return [], 0.0
 
         prompt = (
-            "You are a transit alert entity selector. "
-            "Pick ONLY affected stop_ids from provided candidates. "
-            "Do not hallucinate stop IDs. "
-            "If uncertain, return an empty list. "
-            "Return strict JSON only with keys: selected_stop_ids (array), confidence (0..1).\\n\\n"
-            f"Routes: {route_ids}\\n"
-            f"Location hints: {list(location_hints)}\\n"
-            f"Alert text: {text}\\n"
-            f"Allowed candidates: {json.dumps(pretty_candidates, ensure_ascii=False)}"
+            "You are a transit entity selector.\n"
+            "Return strict JSON only with keys: selected_route_ids (array), selected_stop_ids (array), confidence (0..1).\n"
+            "Rules:\n"
+            "- Select only from allowed IDs.\n"
+            "- Keep locked IDs if present.\n"
+            "- Do not hallucinate.\n"
+            "- If uncertain return empty arrays.\n\n"
+            f"Alert text: {text}\n"
+            f"Location hints: {list(location_hints)}\n"
+            f"Allowed route IDs: {allowed_routes}\n"
+            f"Allowed stop candidates: {json.dumps(pretty_candidates, ensure_ascii=False)}\n"
+            f"Locked route IDs: {list(locked_route_ids)}\n"
+            f"Locked stop IDs: {list(locked_stop_ids)}\n"
         )
 
         try:
@@ -414,25 +535,51 @@ class AlertCompiler:
             if not isinstance(content, str):
                 content = str(content)
             parsed = self._extract_first_json_object(content)
-            selected = parsed.get("selected_stop_ids", [])
+            routes = parsed.get("selected_route_ids", [])
+            stops = parsed.get("selected_stop_ids", [])
             confidence = self._coerce_confidence(parsed.get("confidence", 0.0))
-            if not isinstance(selected, list):
-                return [], 0.0
+            if not isinstance(routes, list):
+                routes = []
+            if not isinstance(stops, list):
+                stops = []
 
-            allowed = set(allowed_stop_ids)
-            selected_ids: List[str] = []
-            for sid in selected:
+            route_allow = {r.upper() for r in allowed_routes}
+            stop_allow = {s.upper() for s in allowed_stop_ids}
+            selected_routes = []
+            for rid in routes:
+                token = str(rid).strip().upper()
+                if token and token in route_allow and token not in selected_routes:
+                    selected_routes.append(token)
+
+            selected_stops = []
+            for sid in stops:
                 token = str(sid).strip().upper()
-                if token in allowed and token not in selected_ids:
-                    selected_ids.append(token)
+                if token and token in stop_allow and token not in selected_stops:
+                    selected_stops.append(token)
 
-            selected_entities = []
-            agency = route_entities[0].get("agency_id", "MTA NYCT") if route_entities else "MTA NYCT"
-            for sid in selected_ids:
-                selected_entities.append({"agency_id": agency, "stop_id": sid})
-            return selected_entities, confidence
+            return selected_routes, selected_stops, confidence
         except Exception:
-            return [], 0.0
+            return [], [], 0.0
+
+    def _llm_select_stops(
+        self,
+        text: str,
+        route_entities: Sequence[Dict[str, Any]],
+        stop_candidates: Sequence[Dict[str, Any]],
+        location_hints: Sequence[str],
+    ) -> Tuple[List[Dict[str, Any]], float]:
+        route_ids = [str(e.get("route_id", "")).upper() for e in route_entities if e.get("route_id")]
+        _, stop_ids, confidence = self._llm_select_entities(
+            text=text,
+            allowed_route_ids=route_ids,
+            stop_candidates=stop_candidates,
+            locked_route_ids=[],
+            locked_stop_ids=[],
+            location_hints=location_hints,
+        )
+        agency = route_entities[0].get("agency_id", "MTA NYCT") if route_entities else "MTA NYCT"
+        selected_entities = [{"agency_id": agency, "stop_id": sid} for sid in stop_ids]
+        return selected_entities, confidence
 
     @staticmethod
     def _prune_stops_for_single_location(
@@ -486,15 +633,41 @@ class AlertCompiler:
         return first[:max_len]
 
     def _parse_instruction(self, instruction: str) -> ParsedInstruction:
+        """Backward-compatible parser wrapper used by older call sites/tests."""
         if not instruction:
             return ParsedInstruction(None, None, None, None, None)
 
-        text = instruction.strip()
+        directive_hint = self._parse_directives(instruction) if self._has_labeled_directives(instruction) else ParsedInstruction(
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        intent = self._parse_intent_llm_first(instruction, directive_hint)
+        return ParsedInstruction(
+            header=intent.alert_text or directive_hint.header,
+            description=directive_hint.description,
+            dates_text=intent.temporal_text or directive_hint.dates_text,
+            cause_override=directive_hint.cause_override or intent.cause_hint,
+            effect_override=directive_hint.effect_override or intent.effect_hint,
+        )
 
+    def _parse_directives(self, text: str) -> ParsedInstruction:
+        """Extract structured fields when operator used explicit labeled directives."""
         header = self._extract_labeled_block(
             text,
             "header",
-            ["description", "make description use", "dates", "cause", "effect"],
+            [
+                "description",
+                "make description use",
+                "dates",
+                "cause",
+                "effect",
+                "what's happening",
+                "whats happening",
+                "plan your trip",
+            ],
         )
 
         description = self._extract_labeled_block(text, "description", ["dates", "cause", "effect"])
@@ -507,12 +680,22 @@ class AlertCompiler:
                 description,
                 flags=re.IGNORECASE | re.DOTALL,
             ).strip() or description
+            description = re.sub(
+                r"\btime(?:\s*frame)?\s+(?:is|are)\s+.+$",
+                "",
+                description,
+                flags=re.IGNORECASE | re.DOTALL,
+            ).strip() or description
 
         dates_text = self._extract_labeled_block(text, "dates", ["cause", "effect"])
         if not dates_text:
             m_dates = re.search(r"\bdates?\s+(?:are|is)\s+(.+)$", text, flags=re.IGNORECASE | re.DOTALL)
             if m_dates:
                 dates_text = m_dates.group(1).strip()
+        if not dates_text:
+            m_tf = re.search(r"\btime(?:\s*frame)?\s+(?:is|are)\s+(.+)$", text, flags=re.IGNORECASE | re.DOTALL)
+            if m_tf:
+                dates_text = m_tf.group(1).strip()
 
         cause_override = None
         effect_override = None
@@ -557,6 +740,179 @@ class AlertCompiler:
         out = m.group(1).strip()
         return out or None
 
+    def _parse_intent_llm_first(self, instruction: str, directive_hint: ParsedInstruction) -> IntentParseResult:
+        """LLM-first intent parsing with one retry, then deterministic fallback."""
+        if not instruction:
+            return IntentParseResult(alert_text=None, temporal_text=None)
+
+        heuristic_routes = self._extract_explicit_route_ids(instruction)
+        heuristic_stops = self._extract_explicit_stop_ids(instruction)
+
+        if self._ensure_llm():
+            parsed = self._llm_extract_intent_v2(instruction, compact=False)
+            if parsed is None:
+                parsed = self._llm_extract_intent_v2(instruction, compact=True)
+            if parsed is not None:
+                route_ids = self._merge_unique_tokens(parsed.explicit_route_ids, heuristic_routes)
+                stop_ids = self._merge_unique_tokens(parsed.explicit_stop_ids, heuristic_stops)
+                return IntentParseResult(
+                    alert_text=parsed.alert_text or directive_hint.header,
+                    temporal_text=parsed.temporal_text or directive_hint.dates_text,
+                    explicit_route_ids=tuple(route_ids),
+                    explicit_stop_ids=tuple(stop_ids),
+                    location_phrases=tuple(parsed.location_phrases),
+                    effect_hint=parsed.effect_hint,
+                    cause_hint=parsed.cause_hint,
+                    style_intent=parsed.style_intent,
+                    parse_confidence=max(parsed.parse_confidence, 0.7),
+                )
+
+            self._bump_telemetry("parse_fail")
+
+        fallback = self._heuristic_extract_intent(instruction)
+        return IntentParseResult(
+            alert_text=fallback.header or directive_hint.header,
+            temporal_text=fallback.dates_text or directive_hint.dates_text,
+            explicit_route_ids=tuple(heuristic_routes),
+            explicit_stop_ids=tuple(heuristic_stops),
+            location_phrases=tuple(self.retriever._extract_location_hints(instruction)),
+            effect_hint=directive_hint.effect_override,
+            cause_hint=directive_hint.cause_override,
+            style_intent="moderate",
+            parse_confidence=0.35,
+        )
+
+    @staticmethod
+    def _strip_markdown_formatting(text: str) -> str:
+        """Strip common markdown inline markers (bold/italic) from operator input."""
+        out = re.sub(r"\*{1,3}|_{1,3}", "", text or "")
+        # Normalize missing spaces after punctuation from operator copy/paste.
+        out = re.sub(r"([?!\.])([A-Za-z])", r"\1 \2", out)
+        return out.strip()
+
+    @staticmethod
+    def _has_labeled_directives(text: str) -> bool:
+        """Return True if any explicit labeled directive keyword is present."""
+        return bool(re.search(
+            r"\b(?:header|description|dates?)\s*:"
+            r"|\bdates?\s+(?:are|is)\s"
+            r"|\bcause\s*(?:to|=|:)\s"
+            r"|\beffect\s*(?:to|=|:)\s",
+            text,
+            flags=re.IGNORECASE,
+        ))
+
+    def _llm_extract_intent_v2(self, instruction: str, compact: bool = False) -> Optional[IntentParseResult]:
+        """Bounded LLM extraction of intent slots for free-form operator input."""
+        if not self._ensure_llm():
+            return None
+
+        if compact:
+            prompt = (
+                "Extract transit intent from operator text. Return strict JSON only with keys:\n"
+                "alert_text, temporal_text, explicit_route_ids, explicit_stop_ids, "
+                "location_phrases, effect_hint, cause_hint, style_intent, parse_confidence.\n"
+                "Rules: no prose, no markdown; use null or [] when absent. style_intent='moderate'.\n"
+                f"INPUT:\n{instruction}"
+            )
+        else:
+            prompt = (
+                "You are an MTA alert intent extractor. "
+                "Operators write fully free-form text; extract structured intent.\n"
+                "Return strict JSON only with keys:\n"
+                "alert_text (string|null): rider-facing core alert text without scheduling/meta clauses.\n"
+                "temporal_text (string|null): raw time/recurrence phrase(s).\n"
+                "explicit_route_ids (array of strings): route IDs explicitly present in input.\n"
+                "explicit_stop_ids (array of strings): stop IDs explicitly present in input.\n"
+                "location_phrases (array of strings): place phrases that can help stop grounding.\n"
+                "effect_hint (string|null): GTFS effect guess if explicit in text.\n"
+                "cause_hint (string|null): GTFS cause guess if explicit in text.\n"
+                "style_intent (string): use 'moderate'.\n"
+                "parse_confidence (number 0..1).\n"
+                "Never invent IDs not present in input. Use [] or null when missing.\n\n"
+                f"Operator input:\n{instruction}"
+            )
+
+        try:
+            response = self.llm.invoke(prompt)
+            content = getattr(response, "content", "") if response is not None else ""
+            if not isinstance(content, str):
+                content = str(content)
+            parsed = self._extract_first_json_object(content)
+            alert_text = str(parsed.get("alert_text") or "").strip() or None
+            temporal_text = str(parsed.get("temporal_text") or "").strip() or None
+            if temporal_text and temporal_text.lower() in {"null", "none"}:
+                temporal_text = None
+
+            route_ids = []
+            if isinstance(parsed.get("explicit_route_ids"), list):
+                route_ids = [str(x).strip() for x in parsed.get("explicit_route_ids", []) if str(x).strip()]
+            stop_ids = []
+            if isinstance(parsed.get("explicit_stop_ids"), list):
+                stop_ids = [str(x).strip() for x in parsed.get("explicit_stop_ids", []) if str(x).strip()]
+            locations = []
+            if isinstance(parsed.get("location_phrases"), list):
+                locations = [str(x).strip() for x in parsed.get("location_phrases", []) if str(x).strip()]
+
+            effect_hint = str(parsed.get("effect_hint") or "").strip().upper() or None
+            cause_hint = str(parsed.get("cause_hint") or "").strip().upper() or None
+            style_intent = str(parsed.get("style_intent") or "").strip() or "moderate"
+            parse_conf = self._coerce_confidence(parsed.get("parse_confidence", 0.0))
+
+            if not alert_text and not temporal_text and not route_ids and not stop_ids and not locations:
+                return None
+
+            return IntentParseResult(
+                alert_text=alert_text,
+                temporal_text=temporal_text,
+                explicit_route_ids=tuple(route_ids),
+                explicit_stop_ids=tuple(stop_ids),
+                location_phrases=tuple(locations),
+                effect_hint=effect_hint,
+                cause_hint=cause_hint,
+                style_intent=style_intent,
+                parse_confidence=parse_conf,
+            )
+        except Exception:
+            return None
+
+    def _heuristic_extract_intent(self, instruction: str) -> ParsedInstruction:
+        """Deterministic fallback when no labeled directives and no LLM are available."""
+        text = (instruction or "").strip()
+        if not text:
+            return ParsedInstruction(None, None, None, None, None)
+
+        dates_text = None
+        date_match = re.search(
+            r"(?:\b(?:the\s+)?dates?\s+(?:should\s+be|are|is)\s+(.+)$)|(?:\bdates?\s*:\s*(.+)$)",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if date_match:
+            dates_text = (date_match.group(1) or date_match.group(2) or "").strip() or None
+
+        header_text = self._clean_header_text(text)
+        if not header_text:
+            return ParsedInstruction(None, None, dates_text, None, None)
+
+        return ParsedInstruction(
+            header=header_text,
+            description=None,
+            dates_text=dates_text,
+            cause_override=None,
+            effect_override=None,
+        )
+
+    def _extract_explicit_stop_ids(self, text: str) -> List[str]:
+        ids: List[str] = []
+        for m in re.finditer(r"\bstop(?:\s*id)?\s*[:#]?\s*([A-Za-z0-9]{3,10}[NS]?)\b", text, flags=re.IGNORECASE):
+            ids.append(m.group(1).strip().upper())
+        return self._merge_unique_tokens(ids)
+
+    def _extract_explicit_route_ids(self, text: str) -> List[str]:
+        tokens = self.retriever._route_tokens_from_text(text)
+        return self._merge_unique_tokens(tokens)
+
     @staticmethod
     def _has_temporal_hint(text: str) -> bool:
         lower = (text or "").lower()
@@ -583,11 +939,76 @@ class AlertCompiler:
             return out
 
         # Remove trailing directive clauses often used in instruction mode.
+        out = re.sub(r"\b(?:the\s+)?dates?\s+should\s+be\s+.+$", "", out, flags=re.IGNORECASE | re.DOTALL).strip()
         out = re.sub(r"\bdates?\s+(?:are|is)\s+.+$", "", out, flags=re.IGNORECASE | re.DOTALL).strip()
         out = re.sub(r"\bdates?\s*:\s*.+$", "", out, flags=re.IGNORECASE | re.DOTALL).strip()
         out = re.sub(r"\bcause\s*(?:to|=|:)\s*[A-Za-z_]+\b", "", out, flags=re.IGNORECASE).strip()
         out = re.sub(r"\beffect\s*(?:to|=|:)\s*[A-Za-z_]+\b", "", out, flags=re.IGNORECASE).strip()
         return re.sub(r"\s{2,}", " ", out).strip(" ,")
+
+    @staticmethod
+    def _clean_header_text(text: str) -> str:
+        out = (text or "").strip()
+        if not out:
+            return out
+
+        # Drop common narrative/meta sections from the header.
+        stop_markers = [
+            r"\bdescription\s*:",
+            r"\bwhat(?:['’])?s\s+happening\??",
+            r"\bsee\s+a\s+map\b",
+            r"\bplan\s+your\s+trip\b",
+            r"\b(?:the\s+)?dates?\s+(?:should\s+be|are|is)\b",
+            r"\bdates?\s*:",
+        ]
+        cut_positions = []
+        for marker in stop_markers:
+            m = re.search(marker, out, flags=re.IGNORECASE)
+            if m:
+                cut_positions.append(m.start())
+        if cut_positions:
+            out = out[: min(cut_positions)].strip()
+
+        return re.sub(r"\s{2,}", " ", out).strip(" ,.;:-")
+
+    def _replace_stop_ids_with_names(self, text: str, entities: Sequence[Dict[str, Any]]) -> str:
+        out = (text or "").strip()
+        if not out:
+            return out
+
+        candidate_ids = set(re.findall(r"\bstop\s*id\s*([A-Za-z0-9]{3,10}[NS]?)\b", out, flags=re.IGNORECASE))
+        for e in entities or []:
+            if isinstance(e, dict) and e.get("stop_id"):
+                candidate_ids.add(str(e.get("stop_id")))
+
+        for sid_raw in sorted(candidate_ids, key=len, reverse=True):
+            sid = self.retriever.normalize_stop_id(sid_raw)
+            if not sid:
+                continue
+            stop_name = self.retriever.stop_name_for_id(sid)
+            if not stop_name:
+                continue
+            pretty_name = self._humanize_stop_name(stop_name)
+            escaped = re.escape(sid_raw)
+            out = re.sub(rf"\bat\s+stop\s*id\s*{escaped}\b", f"at {pretty_name}", out, flags=re.IGNORECASE)
+            out = re.sub(rf"\bstop\s*id\s*{escaped}\b", pretty_name, out, flags=re.IGNORECASE)
+
+        return re.sub(r"\s{2,}", " ", out).strip()
+
+    @staticmethod
+    def _humanize_stop_name(stop_name: str) -> str:
+        name = (stop_name or "").strip()
+        if not name:
+            return name
+        name = name.replace("/", " at ")
+        name = re.sub(r"\s{2,}", " ", name)
+        # Title-case while keeping short directional tokens uppercase when standalone.
+        titled = name.title()
+        titled = re.sub(r"\bN\b", "N", titled)
+        titled = re.sub(r"\bS\b", "S", titled)
+        titled = re.sub(r"\bE\b", "E", titled)
+        titled = re.sub(r"\bW\b", "W", titled)
+        return titled
 
     @staticmethod
     def _format_route_bullets(text: str, route_ids: Sequence[str]) -> str:
@@ -751,6 +1172,54 @@ class AlertCompiler:
         return False
 
     @staticmethod
+    def _merge_unique_tokens(*groups: Sequence[str]) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for group in groups:
+            for value in group or []:
+                token = str(value or "").strip().upper()
+                if not token or token in seen:
+                    continue
+                seen.add(token)
+                out.append(token)
+        return out
+
+    @staticmethod
+    def _merge_text_tokens(*groups: Sequence[str]) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for group in groups:
+            for value in group or []:
+                token = str(value or "").strip()
+                if not token:
+                    continue
+                key = token.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(token)
+        return out
+
+    def _build_route_entity(self, route_id: str) -> Dict[str, Any]:
+        rid = self.retriever.normalize_route_id(route_id)
+        return {
+            "agency_id": self.retriever.agency_for_route_id(rid),
+            "route_id": rid,
+        }
+
+    def _build_stop_entity(self, stop_id: str) -> Dict[str, Any]:
+        sid = self.retriever.normalize_stop_id(stop_id)
+        return {
+            "agency_id": self.retriever.agency_for_stop_id(sid),
+            "stop_id": sid,
+        }
+
+    def _bump_telemetry(self, key: str, amount: int = 1) -> None:
+        if key not in self.telemetry:
+            self.telemetry[key] = 0
+        self.telemetry[key] += max(1, int(amount))
+
+    @staticmethod
     def _conservative_entities(
         current_entities: Sequence[Dict[str, Any]],
         seed_entities: Sequence[Dict[str, Any]],
@@ -776,6 +1245,27 @@ class AlertCompiler:
     def _global_confidence(route_conf: float, stop_conf: float, temporal_conf: float, schema_conf: float) -> float:
         score = (0.35 * route_conf) + (0.35 * stop_conf) + (0.20 * temporal_conf) + (0.10 * schema_conf)
         return max(0.0, min(1.0, score))
+
+    @staticmethod
+    def _should_preserve_stops_under_low_confidence(
+        entities: Sequence[Dict[str, Any]],
+        stop_conf: float,
+        retrieval: Dict[str, Any],
+        fallback_used: bool,
+        fallback_conf: float,
+    ) -> bool:
+        has_stops = any(isinstance(e, dict) and e.get("stop_id") for e in entities)
+        if not has_stops:
+            return False
+
+        matched_stop_count = int(retrieval.get("matched_stop_count", 0) or 0)
+        if matched_stop_count > 0 and stop_conf >= 0.55:
+            return True
+
+        if fallback_used and fallback_conf >= 0.50:
+            return True
+
+        return stop_conf >= 0.70
 
     @staticmethod
     def _resolve_alert_id(existing_id: Optional[str], header: str, description: str) -> str:
