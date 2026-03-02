@@ -1,0 +1,320 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
+
+from pipeline.description_generator import DescriptionGenerator
+from pipeline.graph import GraphRetriever
+from pipeline.gtfs_rules import UNKNOWN_CAUSE, UNKNOWN_EFFECT, normalize_cause, normalize_effect
+from pipeline.llm_config import build_langchain_chat_model, load_llm_config, with_overrides
+from pipeline.temporal_resolver import TemporalResolver
+
+from .confidence import global_confidence, should_preserve_stops_under_low_confidence
+from .entity_selector import EntitySelector
+from .enum_resolver import EnumResolver
+from .intent_parser import IntentParser
+from .models import CompileRequest
+from .output_builder import OutputBuilder
+from .text_renderer import TextRenderer
+from .utils import (
+    build_route_entity,
+    build_stop_entity,
+    conservative_entities,
+    dedupe_entities,
+    derive_header_from_text,
+    has_temporal_hint,
+    merge_text_tokens,
+    merge_unique_tokens,
+    normalize_entities_for_output,
+    resolve_alert_id,
+)
+
+CONFIDENCE_THRESHOLD = 0.85
+
+
+class AlertCompiler:
+    def __init__(
+        self,
+        graph_path: str = "data/mta_knowledge_graph.gpickle",
+        calendar_path: str = "data/2026_english_calendar.csv",
+        timezone: str = "America/New_York",
+        confidence_threshold: float = CONFIDENCE_THRESHOLD,
+    ):
+        self.retriever = GraphRetriever(graph_path=graph_path)
+        self.temporal_resolver: Optional[TemporalResolver]
+        self.tz = ZoneInfo(timezone)
+        self.confidence_threshold = confidence_threshold
+
+        try:
+            self.temporal_resolver = TemporalResolver(calendar_path=calendar_path, timezone=timezone)
+        except Exception:
+            self.temporal_resolver = None
+
+        self.description_generator = DescriptionGenerator(examples_path="data/mta_alerts.json")
+        self._llm_config = load_llm_config()
+        self._llm_config_active = self._llm_config
+        self.llm = None
+        self.telemetry: Dict[str, int] = {
+            "parse_fail": 0,
+            "explicit_id_invalid_drop": 0,
+            "fallback_used": 0,
+            "inferred_stop_accept": 0,
+        }
+
+        self.intent_parser = IntentParser(
+            retriever=self.retriever,
+            ensure_llm=self._ensure_llm,
+            llm_getter=lambda: self.llm,
+            bump_telemetry=self._bump_telemetry,
+        )
+        self.entity_selector = EntitySelector(
+            ensure_llm=self._ensure_llm,
+            llm_getter=lambda: self.llm,
+        )
+        self.enum_resolver = EnumResolver(
+            ensure_llm=self._ensure_llm,
+            llm_getter=lambda: self.llm,
+        )
+        self.text_renderer = TextRenderer(retriever=self.retriever)
+        self.output_builder = OutputBuilder(
+            ensure_llm=self._ensure_llm,
+            llm_getter=lambda: self.llm,
+        )
+
+    def compile(self, request: CompileRequest) -> Dict[str, Any]:
+        self._set_request_llm_config(request.llm_provider, request.llm_model)
+
+        instruction = (request.instruction or "").strip()
+        if not instruction:
+            raise ValueError("instruction is required and cannot be empty.")
+
+        intent = self.intent_parser.parse(instruction)
+
+        header = intent.alert_text or derive_header_from_text(self.text_renderer.strip_instruction_meta(instruction))
+        header = self.text_renderer.clean_header_text(header)
+        if not header:
+            header = derive_header_from_text(instruction)
+        if not header:
+            raise ValueError("Unable to derive a non-empty header from the request.")
+
+        temporal_text = intent.temporal_text or instruction or header
+        temporal_override = bool(intent.temporal_text or has_temporal_hint(instruction))
+        temporal_confidence = 0.4
+        active_periods: List[Dict[str, Any]] = []
+
+        resolved_periods: List[Dict[str, Any]] = []
+        if self.temporal_resolver:
+            for p in self.temporal_resolver.resolve_all(temporal_text):
+                resolved_periods.append({"start": p.start, "end": p.end})
+
+        if temporal_override and resolved_periods:
+            active_periods = resolved_periods
+            temporal_confidence = 0.98
+        elif resolved_periods:
+            active_periods = resolved_periods
+            temporal_confidence = 0.9
+        else:
+            now_iso = datetime.now(self.tz).strftime("%Y-%m-%dT%H:%M:%S")
+            active_periods = [{"start": now_iso}]
+
+        explicit_route_ids = self.retriever.validate_route_ids(intent.explicit_route_ids)
+        explicit_stop_ids = self.retriever.validate_stop_ids(intent.explicit_stop_ids)
+        dropped_explicit = max(0, len(intent.explicit_stop_ids) - len(explicit_stop_ids))
+        if dropped_explicit:
+            self._bump_telemetry("explicit_id_invalid_drop", dropped_explicit)
+
+        explicit_route_entities = [build_route_entity(self.retriever, rid) for rid in explicit_route_ids]
+        explicit_stop_entities = [build_stop_entity(self.retriever, sid) for sid in explicit_stop_ids]
+        seed_entities = dedupe_entities(explicit_route_entities + explicit_stop_entities)
+
+        affected_segments, alternative_segments = self.retriever._split_affected_and_alternative_segments(instruction)
+        affected_hints = self.retriever._extract_location_hints(". ".join(affected_segments))
+        alternative_hints = {h.lower() for h in self.retriever._extract_location_hints(". ".join(alternative_segments))}
+        intent_hints = [h for h in intent.location_phrases if str(h).strip().lower() not in alternative_hints]
+        location_hints_override = merge_text_tokens(affected_hints, intent_hints)
+
+        retrieval = self.retriever.retrieve_affected_entities(
+            instruction,
+            seed_entities=seed_entities,
+            route_ids_override=explicit_route_ids or None,
+            location_hints_override=location_hints_override or None,
+            max_stop_candidates=20,
+        )
+
+        retrieved_entities = retrieval.get("informed_entities", []) if retrieval.get("status") == "success" else []
+        inferred_route_entities = [e for e in retrieved_entities if e.get("route_id") and not e.get("stop_id")]
+        inferred_stop_entities = [e for e in retrieved_entities if e.get("stop_id")]
+        stop_candidates = retrieval.get("stop_candidates", []) if retrieval.get("status") == "success" else []
+
+        allowed_route_ids = merge_unique_tokens(
+            explicit_route_ids,
+            retrieval.get("route_ids", []),
+            [e.get("route_id") for e in inferred_route_entities if e.get("route_id")],
+        )
+
+        llm_route_ids: List[str] = []
+        llm_stop_ids: List[str] = []
+        llm_entity_conf = 0.0
+        if self._ensure_llm() and (allowed_route_ids or stop_candidates):
+            llm_route_ids, llm_stop_ids, llm_entity_conf = self.entity_selector.llm_select_entities(
+                text="\n".join([header, instruction]).strip(),
+                allowed_route_ids=allowed_route_ids,
+                stop_candidates=stop_candidates,
+                locked_route_ids=explicit_route_ids,
+                locked_stop_ids=explicit_stop_ids,
+                location_hints=retrieval.get("location_hints", []),
+            )
+
+        if llm_stop_ids and llm_entity_conf >= 0.65:
+            self._bump_telemetry("inferred_stop_accept", len(llm_stop_ids))
+
+        locked_stop_ids = {sid.upper() for sid in explicit_stop_ids}
+        if locked_stop_ids:
+            inferred_stop_entities = [
+                e for e in inferred_stop_entities if str(e.get("stop_id", "")).upper() in locked_stop_ids
+            ]
+        elif llm_stop_ids and llm_entity_conf >= 0.65:
+            inferred_stop_entities = [build_stop_entity(self.retriever, sid) for sid in llm_stop_ids]
+
+        inferred_stop_entities = self.entity_selector.prune_stops_for_single_location(
+            stop_entities=inferred_stop_entities,
+            source_text=header,
+            stop_candidates=stop_candidates,
+        )
+
+        route_entities = dedupe_entities(
+            explicit_route_entities + inferred_route_entities + [build_route_entity(self.retriever, rid) for rid in llm_route_ids]
+        )
+        stop_entities = dedupe_entities(explicit_stop_entities + inferred_stop_entities)
+        informed_entities = dedupe_entities(route_entities + stop_entities)
+        informed_entities = normalize_entities_for_output(
+            informed_entities,
+            "\n".join([header, instruction]),
+        )
+
+        route_conf = float(retrieval.get("route_confidence", 0.0))
+        stop_conf = float(retrieval.get("stop_confidence", 0.0))
+        if explicit_route_ids:
+            route_conf = max(route_conf, 0.95)
+        if explicit_stop_ids:
+            stop_conf = max(stop_conf, 1.0)
+        elif llm_entity_conf >= 0.65 and llm_stop_ids:
+            stop_conf = max(stop_conf, llm_entity_conf)
+        if not route_conf and informed_entities:
+            route_conf = 0.75
+
+        cause_effect = self.enum_resolver.resolve(
+            text="\n".join([header, instruction]).strip(),
+            cause_override=intent.cause_hint,
+            effect_override=intent.effect_hint,
+        )
+
+        schema_conf = 1.0
+        confidence = global_confidence(route_conf, stop_conf, temporal_confidence, schema_conf)
+
+        should_try_fallback = bool(retrieval.get("fallback_needed", False)) or (confidence < self.confidence_threshold)
+        fallback_used = False
+        fallback_conf = 0.0
+        if should_try_fallback:
+            fallback = self.retriever.geocode_fallback_entities(
+                location_hints=retrieval.get("location_hints", []),
+                route_ids=[e.get("route_id") for e in informed_entities if e.get("route_id")],
+            )
+            if fallback.get("status") == "success":
+                fallback_used = True
+                self._bump_telemetry("fallback_used")
+                fallback_conf = float(fallback.get("confidence", 0.0))
+                fallback_entities = fallback.get("entities", [])
+                if explicit_stop_ids:
+                    fallback_entities = [
+                        e for e in fallback_entities if str(e.get("stop_id", "")).upper() in locked_stop_ids
+                    ]
+                informed_entities = dedupe_entities(informed_entities + fallback_entities)
+                stop_conf = max(stop_conf, float(fallback.get("confidence", 0.0)))
+                confidence = global_confidence(route_conf, stop_conf, temporal_confidence, schema_conf)
+
+        preserve_stops = should_preserve_stops_under_low_confidence(
+            entities=informed_entities,
+            stop_conf=stop_conf,
+            retrieval=retrieval,
+            fallback_used=fallback_used,
+            fallback_conf=fallback_conf,
+        )
+        if confidence < self.confidence_threshold and not preserve_stops and not explicit_stop_ids:
+            informed_entities = conservative_entities(informed_entities)
+
+        route_ids_for_text = [e.get("route_id") for e in informed_entities if isinstance(e, dict) and e.get("route_id")]
+        header = self.text_renderer.replace_stop_ids_with_names(header, informed_entities)
+        header = self.description_generator.render_header_mta(
+            llm=self.llm if self._ensure_llm() else None,
+            header=header,
+            source_text=instruction,
+            route_ids=route_ids_for_text,
+            effect=cause_effect.effect,
+            style_intent=intent.style_intent,
+        )
+        header = self.text_renderer.clean_header_text(header)
+        header = self.text_renderer.format_route_bullets(header, route_ids_for_text)
+
+        if not header.strip():
+            fallback_header = intent.alert_text or derive_header_from_text(instruction)
+            header = self.text_renderer.format_route_bullets(
+                self.text_renderer.clean_header_text(fallback_header).strip(),
+                route_ids_for_text,
+            )
+        if not header:
+            raise ValueError("Unable to derive a non-empty header from the request.")
+
+        description = self.description_generator.generate_or_null(
+            llm=self.llm if self._ensure_llm() else None,
+            header=header,
+            source_text="\n".join([instruction, header]).strip(),
+            route_ids=route_ids_for_text,
+            cause=cause_effect.cause if cause_effect.cause_confidence >= self.confidence_threshold else UNKNOWN_CAUSE,
+            effect=cause_effect.effect if cause_effect.effect_confidence >= self.confidence_threshold else UNKNOWN_EFFECT,
+            current_description=None,
+        )
+        if description:
+            description = self.text_renderer.replace_stop_ids_with_names(description, informed_entities)
+            description = self.text_renderer.format_route_bullets(description, route_ids_for_text)
+
+        alert_id = resolve_alert_id(header, description)
+
+        cause_out = normalize_cause(
+            cause_effect.cause if cause_effect.cause_confidence >= self.confidence_threshold else UNKNOWN_CAUSE
+        )
+        effect_out = normalize_effect(
+            cause_effect.effect if cause_effect.effect_confidence >= self.confidence_threshold else UNKNOWN_EFFECT
+        )
+
+        return self.output_builder.build_payload(
+            alert_id=alert_id,
+            active_periods=active_periods,
+            informed_entities=informed_entities,
+            cause=cause_out,
+            effect=effect_out,
+            header_text=header.strip(),
+            description_text=description.strip() if description else None,
+        )
+
+    def _ensure_llm(self) -> bool:
+        if self.llm is not None:
+            return True
+        try:
+            self.llm = build_langchain_chat_model(config=self._llm_config_active, temperature=0.0)
+            return self.llm is not None
+        except Exception:
+            self.llm = None
+            return False
+
+    def _set_request_llm_config(self, provider: Optional[str], model: Optional[str]) -> None:
+        next_config = with_overrides(self._llm_config, provider=provider, model=model)
+        if next_config != self._llm_config_active:
+            self._llm_config_active = next_config
+            self.llm = None
+
+    def _bump_telemetry(self, key: str, amount: int = 1) -> None:
+        if key not in self.telemetry:
+            self.telemetry[key] = 0
+        self.telemetry[key] += max(1, int(amount))

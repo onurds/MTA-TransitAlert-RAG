@@ -59,7 +59,7 @@ async def healthz():
     return {
         "status": "ok",
         "model": current_model_label(engine.llm_config),
-        "runtime": "compiler_no_dspy",
+        "runtime": "compiler_instruction_only",
         "graph_path": GRAPH_PATH,
         "calendar_path": CALENDAR_PATH,
         "confidence_threshold": CONFIDENCE_THRESHOLD,

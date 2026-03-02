@@ -27,15 +27,9 @@ def parse_args() -> argparse.Namespace:
         help="Path to golden jsonl dataset.",
     )
     parser.add_argument("--limit", type=int, default=50, help="Number of examples to evaluate (0=all).")
-    parser.add_argument("--timeout", type=float, default=60.0, help="Per-request timeout in seconds.")
+    parser.add_argument("--timeout", type=float, default=180.0, help="Per-request timeout in seconds.")
     parser.add_argument("--shuffle", action="store_true", help="Shuffle dataset before slicing.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed used when --shuffle is set.")
-    parser.add_argument(
-        "--input-mode",
-        choices=["instruction", "alert", "both"],
-        default="instruction",
-        help="Request mode sent to /compile.",
-    )
     parser.add_argument(
         "--progress-every",
         type=int,
@@ -131,37 +125,13 @@ def f1(gold: set[str], pred: set[str]) -> float:
     return 2 * precision * recall / (precision + recall)
 
 
-def build_request_body(row: Dict[str, Any], mode: str) -> Dict[str, Any]:
-    row_id = str(row.get("id", ""))
+def build_request_body(row: Dict[str, Any]) -> Dict[str, Any]:
     inputs = row.get("inputs", {})
-    targets = row.get("targets", {})
 
     header = inputs.get("header", "") or ""
     description = inputs.get("description", "") or ""
-
-    if mode == "instruction":
-        return {
-            "instruction": f"header: {header}\ndescription: {description}",
-        }
-
-    alert_obj = {
-        "id": row_id,
-        "header_text": {"translation": [{"text": header, "language": "en"}]},
-        "description_text": {"translation": [{"text": description, "language": "en"}]},
-        "effect": "UNKNOWN_EFFECT",
-        "cause": "UNKNOWN_CAUSE",
-        "active_period": targets.get("active_periods", []),
-        "informed_entity": targets.get("informed_entities", []),
-    }
-
-    if mode == "alert":
-        return {"alert": alert_obj}
-
-    # both
-    return {
-        "alert": alert_obj,
-        "instruction": f"description: {description}",
-    }
+    instruction = "\n".join([x for x in [header.strip(), description.strip()] if x]).strip()
+    return {"instruction": instruction}
 
 
 def main():
@@ -175,7 +145,6 @@ def main():
 
     print(f"Evaluating {len(dataset)} examples from {args.dataset}")
     print(f"Endpoint: {args.url}")
-    print(f"Input mode: {args.input_mode}")
     print(f"Timeout per request: {args.timeout:.1f}s")
 
     session = requests.Session()
@@ -198,7 +167,7 @@ def main():
         row_id = str(row.get("id", f"row_{idx}"))
         targets = row.get("targets", {})
 
-        body = build_request_body(row, args.input_mode)
+        body = build_request_body(row)
 
         if args.verbose:
             print(f"[{idx}/{len(dataset)}] {row_id}: sending request...", flush=True)

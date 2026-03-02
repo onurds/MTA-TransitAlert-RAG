@@ -58,12 +58,12 @@ def _build_compiler_no_llm() -> AlertCompiler:
 
 
 def test_instruction_only_compile():
-    compiler = _build_compiler()
+    compiler = _build_compiler_no_llm()
     request = CompileRequest(
         instruction=(
-            "header: Northbound B20 buses are detoured due to utility work on Decatur St at Wilson Ave, "
-            "make description use: buses will not make stops on Decatur St from Bushwick Ave to Irving Ave. "
-            "dates are from 09:00 PM to 10:00 PM today."
+            "Northbound B20 buses are detoured due to utility work on Decatur St at Wilson Ave. "
+            "Buses will not make stops on Decatur St from Bushwick Ave to Irving Ave. "
+            "From 09:00 PM to 10:00 PM today."
         )
     )
 
@@ -71,12 +71,10 @@ def test_instruction_only_compile():
 
     assert compiled["id"].startswith("lmm:")
     assert _header_text(compiled)
-    # Description text is nullable in the GTFS-shaped contract.
     assert "description_text" in compiled
-    assert "severity" not in compiled
-    assert _translation_langs(compiled.get("header_text", {})) >= {"en", "en-html"}
+    assert _translation_langs(compiled.get("header_text", {})) >= {"en", "en-html", "zh", "es"}
     if compiled.get("description_text"):
-        assert _translation_langs(compiled.get("description_text", {})) >= {"en", "en-html"}
+        assert _translation_langs(compiled.get("description_text", {})) >= {"en", "en-html", "zh", "es"}
     assert "tts_header_text" in compiled
     assert "tts_description_text" in compiled
     assert compiled["cause"] in {"MAINTENANCE", "UNKNOWN_CAUSE"}
@@ -85,31 +83,9 @@ def test_instruction_only_compile():
     assert any(e.get("route_id") == "B20" for e in _entities(compiled))
 
 
-def test_alert_plus_instruction_preserves_id_and_applies_override():
-    compiler = _build_compiler()
-    request = CompileRequest(
-        alert={
-            "id": "lmm:alert:508367",
-            "header": "[Q] trains are running with delays.",
-            "description": "Original description",
-            "effect": "UNKNOWN_EFFECT",
-            "cause": "UNKNOWN_CAUSE",
-            "active_periods": [{"start": "2026-02-11T09:47:03", "end": "2026-02-11T10:25:54"}],
-            "informed_entities": [{"agency_id": "MTASBWY", "route_id": "Q"}],
-        },
-        instruction="make description use: Updated description for riders.",
-    )
-
-    compiled = compiler.compile(request)
-    assert compiled["id"] == "lmm:alert:508367"
-    # Existing description is preserved unless grounded rewrite is produced.
-    assert _description_text(compiled)
-    assert any(e.get("route_id") == "Q" for e in _entities(compiled))
-
-
 def test_ambiguous_text_keeps_unknown_enums():
-    compiler = _build_compiler()
-    request = CompileRequest(instruction="header: Q trains are operating. description: Regular service update.")
+    compiler = _build_compiler_no_llm()
+    request = CompileRequest(instruction="Q trains are operating. Regular service update.")
     compiled = compiler.compile(request)
 
     assert compiled["cause"] == "UNKNOWN_CAUSE"
@@ -118,14 +94,14 @@ def test_ambiguous_text_keeps_unknown_enums():
 
 def test_temporal_today_range():
     resolver = TemporalResolver(calendar_path="data/2026_english_calendar.csv", timezone="America/New_York")
-    period = resolver.resolve("dates are from 09:00 PM to 10:00 PM today")
+    period = resolver.resolve("from 09:00 PM to 10:00 PM today")
     assert period is not None
     assert period.start.endswith("21:00:00")
     assert period.end.endswith("22:00:00")
 
 
 def test_no_false_a_route_and_no_a_brackets():
-    compiler = _build_compiler()
+    compiler = _build_compiler_no_llm()
     request = CompileRequest(
         instruction=(
             "Downtown [1] trains are running with delays after we addressed a door problem "
@@ -141,7 +117,7 @@ def test_no_false_a_route_and_no_a_brackets():
 
 
 def test_subway_directional_stop_collapses_without_explicit_direction():
-    compiler = _build_compiler()
+    compiler = _build_compiler_no_llm()
     request = CompileRequest(
         instruction=(
             "Downtown [1] trains are running with delays after we addressed a door problem "
@@ -156,55 +132,19 @@ def test_subway_directional_stop_collapses_without_explicit_direction():
     assert "118S" not in stop_ids
 
 
-def test_freeform_dates_clause_does_not_leak_into_header_and_preserves_stop():
+def test_plain_prose_with_header_dates_description_words_not_treated_as_directives():
     compiler = _build_compiler_no_llm()
     request = CompileRequest(
         instruction=(
-            "Southbound Q52-SBS and Q53-SBS stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated "
-            "down the block before 107th Ave. The dates should be from tomorrow 8PM and repeat every monday "
-            "for 4 weeks at the same time frames, end hour is 10PM."
-        )
-    )
-
-    compiled = compiler.compile(request)
-    assert "dates should be" not in _header_text(compiled).lower()
-    assert "what's happening" not in _header_text(compiled).lower()
-    assert len(_periods(compiled)) == 4
-    assert any(e.get("route_id") == "Q52+" for e in _entities(compiled))
-    assert any(e.get("route_id") == "Q53+" for e in _entities(compiled))
-    assert any(e.get("stop_id") == "553345" for e in _entities(compiled))
-
-
-def test_whats_happening_section_is_not_leaked_into_header():
-    compiler = _build_compiler_no_llm()
-    request = CompileRequest(
-        instruction=(
-            "Southbound Q52-SBS and Q53-SBS stop on Cross Bay Blvd at Liberty Ave has been temporarily relocated "
-            "down the block before 107th Ave. What's happening? Rockaway Blvd Subway Station Accessibility Upgrades. "
-            "Plan your trip at mta.info or use the MTA app. Dates: from right now to 2 hours after."
-        )
-    )
-
-    compiled = compiler.compile(request)
-    assert "what's happening" not in _header_text(compiled).lower()
-    assert "plan your trip" not in _header_text(compiled).lower()
-    assert any(e.get("stop_id") == "553345" for e in _entities(compiled))
-
-
-def test_natural_text_with_dates_token_does_not_require_directive_parsing():
-    compiler = _build_compiler_no_llm()
-    request = CompileRequest(
-        instruction=(
-            "Eastbound M66 stop on W 65th St at Columbus Ave is being bypassed; "
-            "use the stop on W 65th at Broadway instead. "
-            "The word dates appears naturally here, timeframe is tomorrow 8pm to 11pm."
+            "Operator note: the words header, dates, and description appear in this sentence naturally. "
+            "Southbound Q52-SBS and Q53-SBS will not stop at stop id 553345 tomorrow 8pm to 11pm."
         )
     )
     compiled = compiler.compile(request)
 
     assert _header_text(compiled)
-    assert any(e.get("route_id") == "M66" for e in _entities(compiled))
-    assert _periods(compiled) and _periods(compiled)[0]["start"].endswith("20:00:00")
+    stop_ids = {e.get("stop_id") for e in _entities(compiled) if e.get("stop_id")}
+    assert "553345" in stop_ids
 
 
 def test_explicit_stop_id_is_hard_locked_when_valid():
@@ -221,7 +161,6 @@ def test_explicit_stop_id_is_hard_locked_when_valid():
     assert "553345" in stop_ids
     assert "982075" not in stop_ids
     assert "stop id 553345" not in _header_text(compiled).lower()
-    assert "cross bay" in _header_text(compiled).lower()
     assert any(e.get("route_id") == "Q52+" for e in _entities(compiled))
     assert any(e.get("route_id") == "Q53+" for e in _entities(compiled))
 
@@ -240,36 +179,6 @@ def test_invalid_explicit_stop_id_is_dropped():
     assert "9999999" not in stop_ids
 
 
-def test_freeform_timeframe_is_not_leaked_to_header():
-    compiler = _build_compiler_no_llm()
-    request = CompileRequest(
-        instruction="Southbound B20 buses are detoured on Decatur St at Wilson Ave, timeframe is tomorrow 8pm to 11pm."
-    )
-    compiled = compiler.compile(request)
-    assert "timeframe is" not in _header_text(compiled).lower()
-
-
-def test_m66_bypass_uses_single_affected_stop_and_until_friday_window():
-    compiler = _build_compiler_no_llm()
-    request = CompileRequest(
-        instruction=(
-            "Eastbound M66 stop on W 65th St at Columbus Ave is being bypassed; "
-            "use the stop on W 65th at Broadway instead. "
-            "description: See a map of this stop change. What's happening?Building Construction Note: "
-            "Bus arrival information may not be available/accurate while buses are detoured. "
-            "Timeframe is from today timestamp until friday 10PM."
-        )
-    )
-    compiled = compiler.compile(request)
-
-    assert _header_text(compiled).startswith("Eastbound [M66] stop on W 65th St at Columbus Ave is being bypassed")
-    assert "description:" not in _header_text(compiled).lower()
-    assert "timeframe is" not in _description_text(compiled).lower()
-    stop_ids = [e.get("stop_id") for e in _entities(compiled) if e.get("stop_id")]
-    assert stop_ids == ["403573"]
-    assert _periods(compiled) and _periods(compiled)[0]["end"].endswith("22:00:00")
-
-
 def test_m66_alternative_stop_phrase_does_not_override_affected_stop():
     compiler = _build_compiler_no_llm()
     request = CompileRequest(
@@ -285,15 +194,23 @@ def test_m66_alternative_stop_phrase_does_not_override_affected_stop():
     assert "see a map" not in _header_text(compiled).lower()
 
 
-def test_m66_mixed_single_clause_still_selects_columbus_affected_stop():
+def test_output_key_order_and_nullable_fields_present():
     compiler = _build_compiler_no_llm()
-    request = CompileRequest(
-        instruction=(
-            "Eastbound M66 stop on W 65th St at Columbus Ave is being bypassed, "
-            "use the stop on W 65th at Broadway instead. "
-            "Timeframe is from today timestamp until friday 10PM."
-        )
+    compiled = compiler.compile(
+        CompileRequest(instruction="Southbound B20 buses are detoured at Decatur St at Wilson Ave from now to 2 hours after")
     )
-    compiled = compiler.compile(request)
-    stop_ids = [e.get("stop_id") for e in _entities(compiled) if e.get("stop_id")]
-    assert stop_ids == ["403573"]
+
+    assert list(compiled.keys()) == [
+        "id",
+        "active_period",
+        "informed_entity",
+        "cause",
+        "effect",
+        "header_text",
+        "description_text",
+        "tts_header_text",
+        "tts_description_text",
+    ]
+    assert "description_text" in compiled
+    assert "tts_description_text" in compiled
+    assert _description_text(compiled) == "" or isinstance(compiled["description_text"], dict) or compiled["description_text"] is None

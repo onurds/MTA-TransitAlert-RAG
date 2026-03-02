@@ -1,24 +1,23 @@
 # Antigravity Internal Context: MTA Transit Alert Compiler
 
-This file is the implementation memory for the project. It records what is currently running, why architectural pivots were made, and what remains open.
+Implementation memory for the current runtime.
 
-Last updated: March 1, 2026.
+Last updated: March 2, 2026.
 
 ---
 
-## 1) Current Product Definition
+## 1) Product Definition
 
 The system is a semantic compiler, not a chatbot.
 
 Input:
 
-- raw natural-language operator instruction, or
-- legacy alert object (`id`, `header`, `description`, `active_periods`, `informed_entities`) plus optional edit instruction.
+- free-form natural-language operator instruction only.
 
 Output:
 
-- one legacy alert JSON payload with strict field names:
-`id`, `header`, `description`, `effect`, `cause`, `severity`, `active_periods`, `informed_entities`.
+- one GTFS-shaped JSON payload with fixed top-level keys:
+`id`, `active_period`, `informed_entity`, `cause`, `effect`, `header_text`, `description_text`, `tts_header_text`, `tts_description_text`.
 
 Endpoint:
 
@@ -26,97 +25,51 @@ Endpoint:
 
 ---
 
-## 2) Architecture Pivot (What Changed)
+## 2) Current Runtime Direction
 
-### Previous direction (now retired from runtime)
-
-- `/extract` + DSPy-compiled extraction path.
-- DSPy optimization was useful for experiments but underperformed in this use case and created operational complexity.
-
-### Current runtime direction
-
-- `/compile` contract with dual-input normalization.
-- Deterministic GTFS grounding (NetworkX) as first-class source of truth.
-- Bounded LLM calls only for uncertain decisions.
-- Confidence-gated fallback and conservative output policy.
-
-Reason for pivot:
-
-- empirical mismatch between DSPy pipeline accuracy and strong zero-shot model behavior for these instructions,
-- need for strict deterministic control over entities and time,
-- easier production operation and debugging.
+- DSPy is fully removed.
+- Old dual-input and directive-oriented compatibility paths are removed from runtime.
+- Parse mode is LLM-first for intent, deterministic for validation.
+- GTFS graph grounding (NetworkX) is primary for route/stop entities.
+- Google Maps fallback is confidence-gated and conservative.
 
 ---
 
-## 3) Implemented Runtime Modules
+## 3) Modular Runtime Layout
 
-### A. API delivery (`main.py`)
+### A) API delivery (`main.py`)
 
-- `FastAPI` service with `/healthz` and `/compile`.
-- Startup loads compiler, graph, temporal resolver, and provider config once.
-- Health reports runtime as `compiler_no_dspy`.
+- FastAPI service with `/healthz` and `/compile`.
+- Startup initializes compiler, graph, temporal resolver, and provider config once.
+- Health reports runtime as `compiler_instruction_only`.
 
-### B. Compiler orchestrator (`pipeline/compiler.py`)
+### B) Compiler package (`pipeline/compiler/`)
 
-Main responsibilities:
+- `models.py`: request + internal models.
+- `intent_parser.py`: LLM-first intent extraction with minimal catastrophic fallback.
+- `entity_selector.py`: bounded LLM chooser over allowed candidates.
+- `enum_resolver.py`: rule-first + constrained-LLM cause/effect resolution.
+- `text_renderer.py`: header cleaning, stop-id replacement, route bracket formatting.
+- `confidence.py`: confidence scoring and low-confidence preservation checks.
+- `output_builder.py`: GTFS-shaped output assembly, translation and TTS nodes.
+- `utils.py`: shared normalization/dedupe/entity/id helpers.
+- `orchestrator.py`: compile flow orchestration only.
 
-1. Normalize dual input modes into one compile intent.
-2. Parse labeled directives (`header:`, `description:`, `dates:`, `cause:`, `effect:`).
-3. Remove instruction-only control clauses from header text (prevents date clauses leaking into `header`/`description`).
-4. Resolve/merge temporal periods.
-5. Run graph retrieval for route and stop candidates.
-6. Optionally run bounded LLM stop-selector from an allow-list of candidates.
-7. Resolve `cause`/`effect` via rule-first mapper + constrained LLM fallback.
-8. Generate nullable `description` with strict hallucination checks.
-9. Apply confidence score and fallback policy.
-10. Enforce schema and output legacy payload.
+### C) Graph package (`pipeline/graph/`)
 
-### C. Graph grounding (`pipeline/graph_retriever.py`)
-
-- Deterministic route extraction from bracket tokens, bus tokens, and train-context tokens.
-- Route-scoped stop matching via `Serves` neighborhood traversal.
-- Alternative-stop exclusion heuristics ("take X instead", "use stops", etc.).
-- Stronger intersection matching from location hints.
-- KD-tree nearest-stop fallback with geocoded coordinates.
-- Google Maps API key lookup supports `.vscode/.gmaps_api`.
-- Lat/lon compatibility fix (`lat/lon` vs `stop_lat/stop_lon`) is applied in KD-tree build.
-
-### D. Temporal resolver (`pipeline/temporal_resolver.py`)
-
-Deterministic support includes:
-
-- `today`, `tomorrow`, `tonight`,
-- same-day ranges (for example: `09:00 PM to 10:00 PM today`),
-- weekday range windows, plus overnight handling.
-
-### E. Description generation (`pipeline/description_generator.py`)
-
-- Learns style from examples extracted from `data/mta_alerts.json`.
-- Generates description only when source contains rider-facing guidance signals.
-- Returns `null` when evidence is weak.
-- Rejects header-copy descriptions.
-- Applies line-level grounding checks to reduce hallucinations.
-- Can append "What's happening?" cause section when cause is known and safely inferred.
-
-### F. LLM provider config (`pipeline/llm_config.py`)
-
-Supported providers:
-
-- `gemini`
-- `xai`
-- `vllm`
-
-Capabilities:
-
-- env-based default provider/model,
-- per-request override through `/compile` payload (`llm_provider`, `llm_model`),
-- xAI key discovery from `.vscode/.xai_api`.
+- `indexes.py`: graph loading, route/stop indexes, ID validation/normalization.
+- `route_resolver.py`: route token extraction and route-node disambiguation.
+- `location_hints.py`: affected/alternative segmentation and location hint extraction.
+- `stop_matcher.py`: route-neighborhood stop scoring and filtering.
+- `geocode_fallback.py`: key loading, geocoding, nearest-stop fallback.
+- `service.py`: `GraphRetriever` facade.
+- `pipeline/graph_retriever.py`: compatibility re-export shim.
 
 ---
 
 ## 4) Confidence and Fallback Policy
 
-Global score:
+Global score weights:
 
 - route grounding: `0.35`
 - stop grounding: `0.35`
@@ -129,64 +82,41 @@ Threshold:
 
 Behavior:
 
-1. If confidence is low or retrieval asks for recovery, geocoding fallback is attempted.
-2. If confidence remains low, compiler returns conservative route-only entities (schema-valid, low-risk output).
+1. If confidence is low or retriever indicates unresolved stop grounding, geocode fallback is attempted.
+2. If confidence remains low, route-only conservative entities are returned.
 
 ---
 
-## 5) Implemented Quality Fixes (Recent)
+## 5) Active Behavior Guarantees
 
-- Route tokens are bracket-formatted in `header`/`description` without false-wrapping plain words like `a`.
-- `dates:` instruction clauses no longer leak into final header/description text.
-- Duplicate route/stop entities are de-duplicated in output.
-- Stop entities no longer repeat `route_id` in the same object.
-- Subway directional stop IDs (`118N`, `118S`) collapse to parent stop (`118`) unless direction is explicitly stated.
-- Header non-empty safeguard added; compile now fails fast if no valid header can be derived.
-- Description field is always present in output payload (`string` or `null`).
+1. Free-form operator input does not require directive syntax.
+2. Explicit valid stop IDs are hard-locked.
+3. Invalid explicit stop IDs are dropped deterministically.
+4. Alternative-stop mentions are excluded from affected-stop output when confidence is weak/conflicted.
+5. Description is nullable and may remain `null` when grounded rider guidance is insufficient.
 
 ---
 
-## 6) Active Risks / Open Items
+## 6) Current Risks
 
-1. Some cases still need better stop disambiguation when multiple nearby candidates are plausible.
-2. Description generator needs continued tuning for archetype coverage and stable "MTA jargon" sections.
-3. Evaluation set expansion is needed for multi-route + sparse-location edge cases.
-
----
-
-## 7) Repository Map (Runtime-Relevant)
-
-```text
-MTA-TransitAlert-RAG/
-├── main.py
-├── pipeline/
-│   ├── compiler.py
-│   ├── graph_retriever.py
-│   ├── temporal_resolver.py
-│   ├── description_generator.py
-│   ├── gtfs_rules.py
-│   ├── llm_config.py
-│   └── dspy_optimizer.py (archival/non-runtime)
-├── scripts/
-│   ├── interactive_compile.py
-│   ├── eval_api.py
-│   └── check_llm_setup.py
-├── tests/
-│   ├── test_graph_retriever.py
-│   ├── test_compiler.py
-│   └── test_knowledge_graph.py
-├── data/
-└── MTA_GTFS/
-```
+1. Some high-density corridors still need better stop disambiguation under sparse phrasing.
+2. Description style quality depends on source fact richness and bounded LLM confidence.
+3. Translation/TTS latency can increase response time with slower provider models.
 
 ---
 
-## 8) Core Run Commands
+## 7) Core Commands
 
 ```bash
 pip install -r requirements.txt
 uvicorn main:app --reload
 python3 scripts/interactive_compile.py --ask-model
-python3 scripts/eval_api.py --limit 50 --input-mode instruction
+python3 scripts/eval_api.py --limit 50
 pytest tests/test_graph_retriever.py tests/test_compiler.py
 ```
+
+Timeout defaults:
+
+- LLM runtime timeout: `LLM_TIMEOUT_SECONDS=180` (env override).
+- Interactive API timeout: `180s` default (`--timeout` to override).
+- Eval API timeout: `180s` default (`--timeout` to override).

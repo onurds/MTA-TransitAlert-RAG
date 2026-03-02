@@ -4,15 +4,15 @@
 
 Investigator: Onur Dursun  
 Original draft: Feb 2026  
-Revision: March 1, 2026
+Revision: March 2, 2026
 
 ## I. Problem
 
-Transit control teams write alerts in free text under time pressure. GTFS-Realtime consumers need structured fields (`cause`, `effect`, `informed_entities`, `active_periods`). In live feeds, these fields are frequently `UNKNOWN_*` or route-only, which reduces rider-facing routing quality.
+Transit control teams write alerts in free text under time pressure. GTFS-Realtime consumers need structured fields (`cause`, `effect`, `informed_entity`, `active_period`). In live feeds, these fields are often incomplete, reducing rider-facing routing quality.
 
 ## II. Goal
 
-Build a production-usable semantic compiler that transforms natural-language alert instructions into schema-valid legacy alert JSON while minimizing hallucination risk.
+Build a production-usable semantic compiler that transforms unconstrained natural-language operator instructions into schema-valid GTFS-shaped JSON while minimizing hallucination risk.
 
 Primary targets:
 
@@ -20,38 +20,38 @@ Primary targets:
 2. Deterministic temporal normalization of relative phrases.
 3. Conditional enum filling (`cause`, `effect`) with confidence gating.
 4. Reliable low-confidence recovery with geocoding fallback.
-5. Operator-friendly dual-input contract (instruction-only or legacy alert edits).
+5. Operator-friendly instruction-only contract (no syntax burden).
 
-## III. Architectural Revision
+## III. Architectural Direction
 
-### Original proposal direction
+### Runtime approach
 
-- DSPy-optimized extraction runtime around `/extract`.
+- `POST /compile` with instruction-only request.
+- LLM-first interpretation + deterministic validation.
+- DSPy removed fully from codebase.
+- Bounded LLM calls only for constrained subtasks.
+- Modularized runtime (`pipeline/compiler/*` and `pipeline/graph/*`) with thin compatibility shim for `graph_retriever`.
 
-### Implemented runtime direction
+Why this direction:
 
-- `/compile` endpoint with deterministic-first orchestration.
-- DSPy removed from production runtime path.
-- Bounded LLM calls retained only for uncertain, constrained subtasks.
-
-Why changed:
-
-1. Observed mismatch between DSPy runtime accuracy and stronger direct model behavior on real instructions.
-2. Need for tighter operational control, easier debugging, and explicit fallback behavior.
-3. Better alignment with strict schema and grounding constraints.
+1. Better empirical accuracy on free-form text.
+2. Lower operational complexity than DSPy training/runtime paths.
+3. Stronger control over entity grounding and fallback behavior.
 
 ## IV. Implemented System Design
 
-### Module 1: Deterministic GTFS Graph
+### Module 1: Deterministic GTFS Graph Grounding
 
 - NetworkX graph built from `MTA_GTFS` static feeds.
-- Route-stop neighborhoods used to bound stop extraction.
+- Route-stop neighborhoods bound stop extraction.
+- Alternative-stop exclusion logic for detour recommendations.
 
 ### Module 2: Compiler Orchestration
 
-- Normalizes dual input modes into one compile intent.
-- Supports instruction directives (`header`, `description`, `dates`, enum overrides).
-- Preserves legacy alert IDs when provided.
+- Normalizes free-form input to intent.
+- Applies explicit-ID lock/drop-invalid policy.
+- Coordinates retrieval, bounded LLM entity choice, fallback, and rendering.
+- Uses modular internals (`intent_parser`, `entity_selector`, `enum_resolver`, `text_renderer`, `output_builder`).
 
 ### Module 3: Temporal Resolver
 
@@ -64,54 +64,46 @@ Why changed:
 - Constrained LLM fallback only when unresolved.
 - Confidence gate keeps `UNKNOWN_*` when evidence is weak.
 
-### Module 5: Stop Selection + Geocode Fallback
+### Module 5: Text Rendering + Output Assembly
 
-- Candidate stops come from route neighborhoods.
-- Optional LLM selector can pick only from allowed stop candidate IDs.
-- Google Maps fallback triggers under explicit confidence policy.
-
-### Module 6: Description Generator (Bounded)
-
-- Uses style examples mined from `mta_alerts.json`.
-- Generates nullable description only when grounded rider guidance exists.
-- Rejects header copies and unsupported lines.
+- Header rewritten into moderate MTA style without introducing new facts.
+- Description generated only when grounded rider guidance exists.
+- Final response assembled as GTFS-shaped JSON with translations/TTS nodes.
 
 ## V. Runtime Contract
 
 Endpoint: `POST /compile`
 
-Request mode A:
+Request:
 
 ```json
-{"instruction": "..."}
+{
+  "instruction": "free-form operator text",
+  "llm_provider": "optional",
+  "llm_model": "optional"
+}
 ```
 
-Request mode B:
-
-```json
-{"alert": {...legacy fields...}, "instruction": "optional edits"}
-```
-
-Optional per-request LLM override:
-
-```json
-{"instruction": "...", "llm_provider": "xai", "llm_model": "grok-4-1-fast-reasoning"}
-```
-
-Response schema (legacy):
+Response fields:
 
 - `id`
-- `header`
-- `description` (nullable)
-- `effect`
+- `active_period`
+- `informed_entity`
 - `cause`
-- `severity`
-- `active_periods`
-- `informed_entities`
+- `effect`
+- `header_text`
+- `description_text`
+- `tts_header_text`
+- `tts_description_text`
 
-## VI. Evaluation Plan (Current)
+Operational timeout defaults:
 
-Use `data/golden_annotations.jsonl` and evaluate via `scripts/eval_api.py`.
+- LLM call timeout is configurable via `LLM_TIMEOUT_SECONDS` (default: `180`).
+- Client scripts (`interactive_compile.py`, `eval_api.py`) default to `180` second request timeout.
+
+## VI. Evaluation Plan
+
+Use `data/golden_annotations.jsonl` and evaluate with `scripts/eval_api.py`.
 
 Metrics:
 
@@ -124,24 +116,24 @@ Ablation tracks:
 
 1. Rule-only vs rule+LLM enum filling.
 2. With vs without geocode fallback.
-3. Provider comparison (`gemini` vs `xai`; optional `vllm` comparator).
+3. Provider comparison (`gemini` vs `xai`; optional `vllm`).
 
-## VII. Status by Phase
+## VII. Status
 
 Completed:
 
-1. Runtime pivot to `/compile` with dual-input support.
-2. DSPy removal from production path.
-3. Deterministic graph retrieval and alternative-stop filtering.
-4. Confidence scoring and fallback wiring.
-5. xAI + Gemini provider support and per-request model override.
-6. Interactive testing utility and API evaluation script updates.
+1. Compiler contract locked to instruction-only.
+2. DSPy fully removed.
+3. Monolith split into modular compiler and graph packages.
+4. Confidence-gated fallback and explicit-ID lock policy active.
+5. Gemini + xAI + vLLM runtime provider support retained.
+6. Timeout controls standardized for slower reasoning models.
 
 In progress:
 
-1. Description-generation stability across alert archetypes.
-2. Harder stop disambiguation edge cases.
+1. Hard stop disambiguation edge cases in dense corridors.
+2. Continued tuning of description generation style consistency.
 
 ## VIII. Expected Contribution
 
-The paper contribution is a practical deterministic-first architecture for transit alert compilation where LLMs are constrained to bounded decision points instead of full free-form generation, yielding better controllability and safer schema outputs for operational deployment.
+The contribution is a practical, deterministic-validated architecture for transit alert compilation where LLMs are constrained to bounded reasoning points rather than full free-form generation, improving controllability and operational safety.

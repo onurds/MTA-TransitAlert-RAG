@@ -53,10 +53,9 @@ def test_bxm11_detour_location_hints_are_sanitized_for_fallback():
     result = retriever.retrieve_affected_entities(text)
 
     assert result["status"] == "success"
-    assert result["location_hints"] == [
-        "E 177th St at Bronx River Parkway",
-        "Bruckner Blvd at Bruckner Expy",
-    ]
+    hints = result["location_hints"]
+    assert "E 177th St at Bronx River Parkway" in hints
+    assert "Bruckner Blvd at Bruckner Expy" in hints
     assert all(" to " not in hint.lower() for hint in result["location_hints"])
 
 

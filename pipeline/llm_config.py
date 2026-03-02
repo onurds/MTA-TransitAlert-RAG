@@ -24,6 +24,7 @@ class RuntimeLLMConfig:
     xai_api_key_file: str
     vllm_base_url: str
     vllm_model_name: str
+    llm_timeout_seconds: float
 
 
 def _normalize_gemini_model_name(model_name: str) -> str:
@@ -49,6 +50,7 @@ def load_llm_config() -> RuntimeLLMConfig:
         xai_api_key_file=os.environ.get("XAI_API_KEY_FILE", ".vscode/.xai_api").strip(),
         vllm_base_url=os.environ.get("VLLM_BASE_URL", "http://localhost:8000/v1").strip(),
         vllm_model_name=os.environ.get("VLLM_MODEL_NAME", "Qwen/Qwen3.5-35B-A3B").strip(),
+        llm_timeout_seconds=float(os.environ.get("LLM_TIMEOUT_SECONDS", "180")),
     )
 
 
@@ -148,6 +150,7 @@ def with_overrides(
         "xai_api_key_file": base.xai_api_key_file,
         "vllm_base_url": base.vllm_base_url,
         "vllm_model_name": base.vllm_model_name,
+        "llm_timeout_seconds": base.llm_timeout_seconds,
     }
 
     if model_override:
@@ -199,6 +202,7 @@ def build_langchain_chat_model(
             model=config.gemini_model_name,
             google_api_key=api_key,
             temperature=temperature,
+            timeout=config.llm_timeout_seconds,
         )
 
     if config.provider == "xai":
@@ -215,6 +219,7 @@ def build_langchain_chat_model(
             base_url=config.xai_base_url,
             api_key=api_key,
             temperature=temperature,
+            request_timeout=config.llm_timeout_seconds,
         )
 
     if config.provider == "vllm":
@@ -225,42 +230,7 @@ def build_langchain_chat_model(
             base_url=config.vllm_base_url,
             api_key="not-needed",
             temperature=temperature,
+            request_timeout=config.llm_timeout_seconds,
         )
 
     raise ValueError("Unsupported LLM_PROVIDER. Use 'gemini', 'xai', or 'vllm'.")
-
-
-def build_dspy_lm(
-    config: Optional[RuntimeLLMConfig] = None,
-    temperature: float = 0.0,
-    max_tokens: int = 512,
-):
-    """Build a DSPy LM instance from runtime config (archival utility only)."""
-    if not config:
-        config = load_llm_config()
-
-    import dspy
-
-    if config.provider == "gemini":
-        api_key = resolve_gemini_api_key(config)
-        if not api_key:
-            raise RuntimeError(
-                "Gemini API key not found. Set GEMINI_API_KEY or create .gemini_api."
-            )
-        return dspy.LM(
-            f"gemini/{config.gemini_model_name}",
-            api_key=api_key,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-
-    if config.provider == "vllm":
-        return dspy.LM(
-            f"openai/{config.vllm_model_name}",
-            base_url=config.vllm_base_url,
-            api_key="not-needed",
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-
-    raise ValueError("Unsupported LLM_PROVIDER. Use 'gemini' or 'vllm'.")

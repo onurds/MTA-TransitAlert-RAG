@@ -43,10 +43,8 @@ def main():
     skipped_count = 0
 
     for alert in data:
-        # We only want to include valid alerts with valid fields, but for our goal of setting up DSPy, 
-        # we know that 'cause' and 'effect' are usually UNKNOWN. 
-        # Target extraction fields for our golden set based on project proposal: 
-        # informed_entities and active_periods
+        # Keep records that have usable text + informed entities.
+        # cause/effect are intentionally not required in this dataset builder.
 
         header = str(alert.get("header", "") or "") or _pick_en_text(alert.get("header_text"))
         description = str(alert.get("description", "") or "") or _pick_en_text(alert.get("description_text"))
