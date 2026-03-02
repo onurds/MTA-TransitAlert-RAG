@@ -146,13 +146,12 @@ def build_request_body(row: Dict[str, Any], mode: str) -> Dict[str, Any]:
 
     alert_obj = {
         "id": row_id,
-        "header": header,
-        "description": description,
+        "header_text": {"translation": [{"text": header, "language": "en"}]},
+        "description_text": {"translation": [{"text": description, "language": "en"}]},
         "effect": "UNKNOWN_EFFECT",
         "cause": "UNKNOWN_CAUSE",
-        "severity": None,
-        "active_periods": targets.get("active_periods", []),
-        "informed_entities": targets.get("informed_entities", []),
+        "active_period": targets.get("active_periods", []),
+        "informed_entity": targets.get("informed_entities", []),
     }
 
     if mode == "alert":
@@ -260,8 +259,11 @@ def main():
                 )
             continue
 
-        pred_entities = compiled.get("informed_entities", []) if isinstance(compiled, dict) else []
-        pred_periods = compiled.get("active_periods", []) if isinstance(compiled, dict) else []
+        pred_entities = []
+        pred_periods = []
+        if isinstance(compiled, dict):
+            pred_entities = compiled.get("informed_entity", compiled.get("informed_entities", []))
+            pred_periods = compiled.get("active_period", compiled.get("active_periods", []))
 
         gold_entities = targets.get("informed_entities", [])
         gold_periods = targets.get("active_periods", [])

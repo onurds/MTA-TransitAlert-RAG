@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import re
 from dataclasses import dataclass, field
@@ -26,6 +27,7 @@ from pipeline.temporal_resolver import TemporalResolver
 
 
 CONFIDENCE_THRESHOLD = 0.85
+MULTI_LANG_CODES = ("zh", "es")
 
 
 class InformedEntity(BaseModel):
@@ -50,15 +52,57 @@ class ActivePeriod(BaseModel):
     end: Optional[str] = None
 
 
+class Translation(BaseModel):
+    text: str
+    language: Optional[str] = None
+
+
+class TranslatedString(BaseModel):
+    translation: List[Translation] = Field(default_factory=list)
+
+
 class LegacyAlertPayload(BaseModel):
     id: str = ""
     header: str = ""
     description: Optional[str] = None
     effect: str = UNKNOWN_EFFECT
     cause: str = UNKNOWN_CAUSE
-    severity: Optional[Any] = None
     active_periods: List[ActivePeriod] = Field(default_factory=list)
     informed_entities: List[InformedEntity] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_gtfs_shape(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        out = dict(data)
+
+        # Accept GTFS-style request alert payloads.
+        if "active_period" in out and "active_periods" not in out:
+            out["active_periods"] = out.get("active_period")
+        if "informed_entity" in out and "informed_entities" not in out:
+            out["informed_entities"] = out.get("informed_entity")
+
+        if not out.get("header") and isinstance(out.get("header_text"), dict):
+            tr = out["header_text"].get("translation") or []
+            if isinstance(tr, list):
+                for item in tr:
+                    if isinstance(item, dict) and item.get("text"):
+                        out["header"] = str(item.get("text"))
+                        if str(item.get("language", "")).lower() == "en":
+                            break
+
+        if not out.get("description") and isinstance(out.get("description_text"), dict):
+            tr = out["description_text"].get("translation") or []
+            if isinstance(tr, list):
+                for item in tr:
+                    if isinstance(item, dict) and item.get("text"):
+                        out["description"] = str(item.get("text"))
+                        if str(item.get("language", "")).lower() == "en":
+                            break
+
+        return out
 
 
 class CompileRequest(BaseModel):
@@ -355,25 +399,171 @@ class AlertCompiler:
             description=description.strip() if description else None,
             effect=normalize_effect(effect if effect_conf >= self.confidence_threshold else UNKNOWN_EFFECT),
             cause=normalize_cause(cause if cause_conf >= self.confidence_threshold else UNKNOWN_CAUSE),
-            severity=base_alert.severity if base_alert else None,
             active_periods=[ActivePeriod(**p) for p in active_periods],
             informed_entities=[InformedEntity(**e) for e in informed_entities],
         )
 
         # exclude_none=True keeps nested objects clean (no stop_id:null, end:null).
-        # Top-level nullable fields (description, severity) are re-inserted explicitly.
         dumped = payload.model_dump(exclude_none=True)
+        variants = self._generate_text_variants_bundle(
+            header_text=dumped["header"],
+            description_text=dumped.get("description"),
+        )
+        header_text = self._build_translated_string(
+            dumped["header"],
+            multi=variants.get("header_multi", {}),
+        )
+        description_text = (
+            self._build_translated_string(
+                dumped["description"],
+                multi=variants.get("description_multi", {}),
+            )
+            if dumped.get("description")
+            else None
+        )
+        tts_header_text = self._build_tts_translated_string(
+            dumped["header"],
+            kind="header",
+            precomputed=variants.get("tts_header"),
+        )
+        tts_description_text = (
+            self._build_tts_translated_string(
+                dumped["description"],
+                kind="description",
+                precomputed=variants.get("tts_description"),
+            )
+            if dumped.get("description")
+            else None
+        )
+
         data = {
             "id": dumped["id"],
-            "header": dumped["header"],
-            "description": dumped.get("description", None),
-            "effect": dumped["effect"],
+            "active_period": dumped["active_periods"],
+            "informed_entity": dumped["informed_entities"],
             "cause": dumped["cause"],
-            "severity": dumped.get("severity", None),
-            "active_periods": dumped["active_periods"],
-            "informed_entities": dumped["informed_entities"],
+            "effect": dumped["effect"],
+            "header_text": header_text,
+            "description_text": description_text,
+            "tts_header_text": tts_header_text,
+            "tts_description_text": tts_description_text,
         }
         return data
+
+    def _build_translated_string(self, text: Optional[str], multi: Optional[Dict[str, str]] = None) -> Optional[Dict[str, Any]]:
+        value = str(text or "").strip()
+        if not value:
+            return None
+        html_value = AlertCompiler._to_en_html(value)
+        multi_map = dict(multi or {})
+        out = [
+            {"text": value, "language": "en"},
+            {"text": html_value, "language": "en-html"},
+        ]
+        for code in MULTI_LANG_CODES:
+            t = str(multi_map.get(code, "") or "").strip()
+            if not t:
+                t = value
+            out.append({"text": t, "language": code})
+        return {
+            "translation": out
+        }
+
+    def _generate_text_variants_bundle(self, header_text: str, description_text: Optional[str]) -> Dict[str, Any]:
+        header = str(header_text or "").strip()
+        description = str(description_text or "").strip()
+        out = {
+            "header_multi": {c: "" for c in MULTI_LANG_CODES},
+            "description_multi": {c: "" for c in MULTI_LANG_CODES},
+            "tts_header": "",
+            "tts_description": "",
+        }
+        if not header or not self._ensure_llm():
+            return out
+
+        prompt = (
+            "You are generating localization + TTS variants for a GTFS transit alert.\n"
+            "Return strict JSON only with keys:\n"
+            "header_zh, header_es, description_zh, description_es, tts_header, tts_description, confidence.\n"
+            "Rules:\n"
+            "- Preserve facts exactly.\n"
+            "- Keep route tokens and IDs unchanged when possible.\n"
+            "- `header_*` and `description_*` must be plain text translations.\n"
+            "- `tts_*` must be English text optimized for speech (expanded abbreviations where natural).\n"
+            "- If description is empty, return empty strings for description_* and tts_description.\n\n"
+            f"HEADER_EN: {header}\n"
+            f"DESCRIPTION_EN: {description}\n"
+        )
+        try:
+            resp = self.llm.invoke(prompt)
+            content = getattr(resp, "content", "") if resp is not None else ""
+            if not isinstance(content, str):
+                content = str(content)
+            parsed = self._extract_first_json_object(content)
+            conf = self._coerce_confidence(parsed.get("confidence", 0.0))
+            if conf < 0.6:
+                return out
+
+            out["header_multi"]["zh"] = str(parsed.get("header_zh", "") or "").strip()
+            out["header_multi"]["es"] = str(parsed.get("header_es", "") or "").strip()
+            out["description_multi"]["zh"] = str(parsed.get("description_zh", "") or "").strip()
+            out["description_multi"]["es"] = str(parsed.get("description_es", "") or "").strip()
+            out["tts_header"] = str(parsed.get("tts_header", "") or "").strip()
+            out["tts_description"] = str(parsed.get("tts_description", "") or "").strip()
+            return out
+        except Exception:
+            return out
+
+    @staticmethod
+    def _to_en_html(text: str) -> str:
+        blocks = [b.strip() for b in re.split(r"(?:\r?\n){2,}", text or "") if b.strip()]
+        if not blocks:
+            return ""
+        rendered: List[str] = []
+        for block in blocks:
+            safe = html.escape(block, quote=False)
+            safe = safe.replace("\n", "<br/>")
+            rendered.append(f"<p>{safe}</p>")
+        return "".join(rendered)
+
+    def _build_tts_translated_string(
+        self,
+        text: Optional[str],
+        kind: str,
+        precomputed: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        source = str(text or "").strip()
+        if not source:
+            return None
+
+        tts_text = str(precomputed or "").strip() or self._deterministic_tts_fallback(source)
+        if not tts_text:
+            return None
+        return {"translation": [{"text": tts_text, "language": "en"}]}
+
+    @staticmethod
+    def _deterministic_tts_fallback(text: str) -> str:
+        out = str(text or "").strip()
+        if not out:
+            return ""
+        out = out.replace("[", "").replace("]", "")
+        replacements = [
+            (r"\bSt\b", "Street"),
+            (r"\bAve\b", "Avenue"),
+            (r"\bAv\b", "Avenue"),
+            (r"\bBlvd\b", "Boulevard"),
+            (r"\bPkwy\b", "Parkway"),
+            (r"\bExpy\b", "Expressway"),
+            (r"\bRd\b", "Road"),
+            (r"\bDr\b", "Drive"),
+            (r"\bN\b", "North"),
+            (r"\bS\b", "South"),
+            (r"\bE\b", "East"),
+            (r"\bW\b", "West"),
+        ]
+        for pattern, repl in replacements:
+            out = re.sub(pattern, repl, out)
+        out = re.sub(r"\s{2,}", " ", out).strip()
+        return out
 
     # ------------------------------------------------------------------
     # Cause / effect resolution

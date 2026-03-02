@@ -48,6 +48,25 @@ class DescriptionGenerator:
                 continue
             header = str(row.get("header", "") or "").strip()
             description = str(row.get("description", "") or "").strip()
+
+            if not header and isinstance(row.get("header_text"), dict):
+                trs = row.get("header_text", {}).get("translation") or []
+                if isinstance(trs, list):
+                    for t in trs:
+                        if isinstance(t, dict) and t.get("text"):
+                            header = str(t.get("text")).strip()
+                            if str(t.get("language", "")).lower() == "en":
+                                break
+
+            if not description and isinstance(row.get("description_text"), dict):
+                trs = row.get("description_text", {}).get("translation") or []
+                if isinstance(trs, list):
+                    for t in trs:
+                        if isinstance(t, dict) and t.get("text"):
+                            description = str(t.get("text")).strip()
+                            if str(t.get("language", "")).lower() == "en":
+                                break
+
             if not header or not description:
                 continue
             archetype = self._infer_archetype(header, description)

@@ -1,6 +1,6 @@
 # MTA Transit Alert Compiler
 
-A guardrailed compiler that converts MTA-style natural-language alerts into legacy GTFS alert JSON.
+A guardrailed compiler that converts MTA-style natural-language alerts into GTFS-shaped alert JSON.
 
 ## Current Architecture (March 2026)
 
@@ -8,7 +8,7 @@ A guardrailed compiler that converts MTA-style natural-language alerts into lega
 - Runtime no longer depends on DSPy.
 - Input supports two modes:
 1. instruction-only text
-2. legacy alert object + optional instruction edits
+2. alert object + optional instruction edits
 - Free-form operator text is supported; no directive syntax is required.
 - Deterministic grounding uses a NetworkX graph built from `MTA_GTFS`.
 - LLM usage is bounded to constrained subtasks:
@@ -28,7 +28,7 @@ A guardrailed compiler that converts MTA-style natural-language alerts into lega
 6. Run bounded LLM entity reasoning over allowed candidate IDs.
 7. Trigger Google Maps fallback only for unresolved low-confidence location grounding.
 8. Render moderate MTA-style header/description without introducing new facts.
-9. Return legacy payload with strict schema validation and fixed key order.
+9. Return GTFS-shaped payload with strict schema validation and fixed key order.
 
 ## API Contract
 
@@ -44,19 +44,18 @@ A guardrailed compiler that converts MTA-style natural-language alerts into lega
 }
 ```
 
-### Request mode 2 (legacy alert + optional edits)
+### Request mode 2 (alert object + optional edits)
 
 ```json
 {
   "alert": {
     "id": "lmm:alert:508367",
-    "header": "[Q] trains are running with delays...",
-    "description": "Optional existing description",
+    "header_text": {"translation": [{"text": "[Q] trains are running with delays...", "language": "en"}]},
+    "description_text": {"translation": [{"text": "Optional existing description", "language": "en"}]},
     "effect": "UNKNOWN_EFFECT",
     "cause": "UNKNOWN_CAUSE",
-    "severity": null,
-    "active_periods": [{"start": "2026-02-11T09:47:03", "end": "2026-02-11T10:25:54"}],
-    "informed_entities": [{"agency_id": "MTASBWY", "route_id": "Q"}]
+    "active_period": [{"start": "2026-02-11T09:47:03", "end": "2026-02-11T10:25:54"}],
+    "informed_entity": [{"agency_id": "MTASBWY", "route_id": "Q"}]
   },
   "instruction": "optional edit command"
 }
@@ -72,25 +71,31 @@ A guardrailed compiler that converts MTA-style natural-language alerts into lega
 }
 ```
 
-### Response (legacy schema)
+### Response (GTFS-shaped JSON)
 
 ```json
 {
   "id": "lmm:generated:...",
-  "header": "...",
-  "description": null,
-  "effect": "DETOUR",
-  "cause": "MAINTENANCE",
-  "severity": null,
-  "active_periods": [{"start": "2026-03-01T21:00:00", "end": "2026-03-01T22:00:00"}],
-  "informed_entities": [
+  "active_period": [{"start": "2026-03-01T21:00:00", "end": "2026-03-01T22:00:00"}],
+  "informed_entity": [
     {"agency_id": "MTABC", "route_id": "B20"},
     {"agency_id": "MTABC", "stop_id": "123456"}
-  ]
+  ],
+  "cause": "MAINTENANCE",
+  "effect": "DETOUR",
+  "header_text": {
+    "translation": [
+      {"text": "...", "language": "en"},
+      {"text": "<p>...</p>", "language": "en-html"}
+    ]
+  },
+  "description_text": null,
+  "tts_header_text": null,
+  "tts_description_text": null
 }
 ```
 
-`description` is intentionally nullable and may be omitted by model generation logic when source facts are insufficient.
+`description_text` is intentionally nullable and may be omitted by model generation logic when source facts are insufficient.
 When explicit stop IDs are invalid, they are dropped and inference continues conservatively.
 
 ## LLM Providers

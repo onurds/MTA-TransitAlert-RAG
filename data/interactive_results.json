@@ -1147,5 +1147,306 @@
         }
       ]
     }
+  },
+  {
+    "timestamp_utc": "2026-03-02T07:13:33.892709+00:00",
+    "instruction": "[S] 42 Street Shuttle service runs overnight. What's happening?\\nWe're providing additional service for customers during planned work.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:f6b6e13ba325",
+      "header": "42 Street Shuttle runs overnight with additional service during planned work",
+      "description": "What's happening?\nWe're providing additional service for customers during planned work.",
+      "effect": "UNKNOWN_EFFECT",
+      "cause": "UNKNOWN_CAUSE",
+      "severity": null,
+      "active_periods": [
+        {
+          "start": "2026-03-02T02:13:20"
+        }
+      ],
+      "informed_entities": [
+        {
+          "agency_id": "MTA NYCT",
+          "stop_id": "403238"
+        }
+      ]
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-02T15:46:58.578519+00:00",
+    "instruction": "Eastbound M66 stop on W 65th St at Columbus Ave is being bypassed; use the stop on W 65th at Broadway instead.  See a map of this stop change. What's happening? Building Construction Note: Bus arrival information may not be available/accurate while buses are detoured. Timeframe is from today timestamp until friday 10PM.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:63c8806f7267",
+      "active_period": [
+        {
+          "start": "2026-03-02T10:46:33",
+          "end": "2026-03-06T22:00:00"
+        }
+      ],
+      "informed_entity": [
+        {
+          "agency_id": "MTA NYCT",
+          "route_id": "M66"
+        },
+        {
+          "agency_id": "MTA NYCT",
+          "stop_id": "403491"
+        }
+      ],
+      "cause": "CONSTRUCTION",
+      "effect": "DETOUR",
+      "header_text": {
+        "translation": [
+          {
+            "text": "Eastbound [M66] stop on W 65th St at Columbus Ave bypassed; use stop on W 65th St at Broadway",
+            "language": "en"
+          }
+        ]
+      },
+      "description_text": {
+        "translation": [
+          {
+            "text": "See a map of this stop change. What's happening?\nBuilding Construction Note: Bus arrival information may not be available/accurate while buses are detoured.",
+            "language": "en"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-02T16:09:13.930507+00:00",
+    "instruction": "Eastbound M66 stop on W 65th St at Columbus Ave is being bypassed; use the stop on W 65th at Broadway instead.  See a map of this stop change. What's happening? Building Construction Note: Bus arrival information may not be available/accurate while buses are detoured. Timeframe is from today timestamp until friday 10PM.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:70be55d4e24b",
+      "active_period": [
+        {
+          "start": "2026-03-02T11:08:44",
+          "end": "2026-03-06T22:00:00"
+        }
+      ],
+      "informed_entity": [
+        {
+          "agency_id": "MTA NYCT",
+          "route_id": "M66"
+        },
+        {
+          "agency_id": "MTA NYCT",
+          "stop_id": "403491"
+        }
+      ],
+      "cause": "CONSTRUCTION",
+      "effect": "DETOUR",
+      "header_text": {
+        "translation": [
+          {
+            "text": "Eastbound [M66] stop on W 65th St at Columbus Ave is being bypassed; use the stop on W 65th at Broadway instead",
+            "language": "en"
+          },
+          {
+            "text": "<p>Eastbound [M66] stop on W 65th St at Columbus Ave is being bypassed; use the stop on W 65th at Broadway instead</p>",
+            "language": "en-html"
+          }
+        ]
+      },
+      "description_text": {
+        "translation": [
+          {
+            "text": "See a map of this stop change. What's happening?\nBuilding Construction Note: Bus arrival information may not be available/accurate while buses are detoured",
+            "language": "en"
+          },
+          {
+            "text": "<p>See a map of this stop change. What's happening?<br/>Building Construction Note: Bus arrival information may not be available/accurate while buses are detoured</p>",
+            "language": "en-html"
+          }
+        ]
+      },
+      "tts_header_text": {
+        "translation": [
+          {
+            "text": "Eastbound M66 stop on West 65th Street at Columbus Avenue is being bypassed. Use the stop on West 65th Street at Broadway instead.",
+            "language": "en"
+          }
+        ]
+      },
+      "tts_description_text": {
+        "translation": [
+          {
+            "text": "See a map of this stop change. What's happening? Building construction note: Bus arrival information may not be available or accurate while buses are detoured.",
+            "language": "en"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-02T16:24:39.016972+00:00",
+    "instruction": "Eastbound M66 stop on W 65th St at Columbus Ave is being bypassed; use the stop on W 65th at Broadway instead.  See a map of this stop change. What's happening? Building Construction Note: Bus arrival information may not be available/accurate while buses are detoured. Timeframe is from today timestamp until friday 10PM.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:b200e271dc66",
+      "active_period": [
+        {
+          "start": "2026-03-02T11:24:00",
+          "end": "2026-03-06T22:00:00"
+        }
+      ],
+      "informed_entity": [
+        {
+          "agency_id": "MTA NYCT",
+          "route_id": "M66"
+        },
+        {
+          "agency_id": "MTA NYCT",
+          "stop_id": "403491"
+        }
+      ],
+      "cause": "UNKNOWN_CAUSE",
+      "effect": "DETOUR",
+      "header_text": {
+        "translation": [
+          {
+            "text": "Eastbound [M66] stop on W 65th St at Columbus Ave bypassed; use stop on W 65th at Broadway",
+            "language": "en"
+          },
+          {
+            "text": "<p>Eastbound [M66] stop on W 65th St at Columbus Ave bypassed; use stop on W 65th at Broadway</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "东行 [M66] W 65th St 与 Columbus Ave 站点被绕过；请使用 W 65th St 与 Broadway 站点",
+            "language": "zh"
+          },
+          {
+            "text": "Parada de [M66] hacia el este en W 65th St con Columbus Ave desviada; use la parada en W 65th con Broadway",
+            "language": "es"
+          }
+        ]
+      },
+      "description_text": {
+        "translation": [
+          {
+            "text": "See a map of this stop change. What's happening?\nBuilding Construction Note: Bus arrival information may not be available/accurate while buses are detoured.",
+            "language": "en"
+          },
+          {
+            "text": "<p>See a map of this stop change. What's happening?<br/>Building Construction Note: Bus arrival information may not be available/accurate while buses are detoured.</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "查看此站点变更地图。发生了什么？\n建筑施工注意：公交车绕行期间，公交车到站信息可能不可用/不准确。",
+            "language": "zh"
+          },
+          {
+            "text": "Ver un mapa de este cambio de parada. ¿Qué está pasando?\nNota de construcción de edificios: La información de llegada de autobuses puede no estar disponible/ser precisa mientras los autobuses están desviados.",
+            "language": "es"
+          }
+        ]
+      },
+      "tts_header_text": {
+        "translation": [
+          {
+            "text": "Eastbound M 66 stop on West 65th Street at Columbus Avenue is bypassed. Use the stop on West 65th Street at Broadway.",
+            "language": "en"
+          }
+        ]
+      },
+      "tts_description_text": {
+        "translation": [
+          {
+            "text": "See a map of this stop change. What is happening? Building construction note: Bus arrival information may not be available or accurate while buses are detoured.",
+            "language": "en"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-02T16:29:34.039076+00:00",
+    "instruction": "Eastbound M66 stop on W 65th St at Columbus Ave is being bypassed; use the stop on W 65th at Broadway instead.  See a map of this stop change. What's happening? Building Construction Note: Bus arrival information may not be available/accurate while buses are detoured. Timeframe is from today timestamp until friday 10PM.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:532062b42c85",
+      "active_period": [
+        {
+          "start": "2026-03-02T11:28:51",
+          "end": "2026-03-06T22:00:00"
+        }
+      ],
+      "informed_entity": [
+        {
+          "agency_id": "MTA NYCT",
+          "route_id": "M66"
+        },
+        {
+          "agency_id": "MTA NYCT",
+          "stop_id": "403491"
+        }
+      ],
+      "cause": "CONSTRUCTION",
+      "effect": "DETOUR",
+      "header_text": {
+        "translation": [
+          {
+            "text": "Eastbound [M66] stop on W 65th St at Columbus Ave is being bypassed; use the stop on W 65th at Broadway instead",
+            "language": "en"
+          },
+          {
+            "text": "<p>Eastbound [M66] stop on W 65th St at Columbus Ave is being bypassed; use the stop on W 65th at Broadway instead</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "东行 [M66] 西65街哥伦布大道站正在绕行；请使用西65街百老汇站",
+            "language": "zh"
+          },
+          {
+            "text": "Parada de [M66] hacia el este en W 65th St con Columbus Ave se está saltando; use la parada en W 65th con Broadway en su lugar",
+            "language": "es"
+          }
+        ]
+      },
+      "description_text": {
+        "translation": [
+          {
+            "text": "See a map of this stop change. What's happening?\nBuilding Construction Note: Bus arrival information may not be available/accurate while buses are detoured",
+            "language": "en"
+          },
+          {
+            "text": "<p>See a map of this stop change. What's happening?<br/>Building Construction Note: Bus arrival information may not be available/accurate while buses are detoured</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "查看此站点变更地图。发生了什么？\n建筑施工注意：巴士绕行期间，巴士到站信息可能不可用/不准确",
+            "language": "zh"
+          },
+          {
+            "text": "Ver un mapa de este cambio de parada. ¿Qué está pasando?\nNota de construcción de edificios: La información de llegada de autobuses puede no estar disponible/ser precisa mientras los autobuses están desviados",
+            "language": "es"
+          }
+        ]
+      },
+      "tts_header_text": {
+        "translation": [
+          {
+            "text": "Eastbound M66 stop on West 65th Street at Columbus Avenue is being bypassed; use the stop on West 65th Street at Broadway instead",
+            "language": "en"
+          }
+        ]
+      },
+      "tts_description_text": {
+        "translation": [
+          {
+            "text": "See a map of this stop change. What's happening? Building construction note: Bus arrival information may not be available or accurate while buses are detoured",
+            "language": "en"
+          }
+        ]
+      }
+    }
   }
 ]
