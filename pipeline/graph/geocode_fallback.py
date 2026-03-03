@@ -7,6 +7,7 @@ import numpy as np
 
 
 GMAPS_API_KEY_FILE = ".vscode/.gmaps_api"
+GMAPS_TIMEOUT_SECONDS = float(os.environ.get("GMAPS_TIMEOUT_SECONDS", "8"))
 
 
 class GeocodeFallbackMixin:
@@ -79,7 +80,11 @@ class GeocodeFallbackMixin:
             return None
 
         try:
-            gmaps = googlemaps.Client(key=api_key)
+            gmaps = googlemaps.Client(
+                key=api_key,
+                timeout=GMAPS_TIMEOUT_SECONDS,
+                requests_kwargs={"timeout": GMAPS_TIMEOUT_SECONDS},
+            )
             results = gmaps.geocode(f"{location_hint}, New York City")
         except Exception:
             return None

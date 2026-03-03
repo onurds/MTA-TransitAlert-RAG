@@ -29,38 +29,31 @@ class IntentParser:
         heuristic_routes = self._extract_explicit_route_ids(text)
         heuristic_stops = self._extract_explicit_stop_ids(text)
 
-        if self.ensure_llm():
-            parsed = self._llm_extract_intent(text, compact=False)
-            if parsed is None:
-                parsed = self._llm_extract_intent(text, compact=True)
-            if parsed is not None:
-                route_ids = self._merge_unique_tokens(parsed.explicit_route_ids, heuristic_routes)
-                stop_ids = self._merge_unique_tokens(parsed.explicit_stop_ids, heuristic_stops)
-                return IntentParseResult(
-                    alert_text=parsed.alert_text,
-                    temporal_text=parsed.temporal_text,
-                    explicit_route_ids=tuple(route_ids),
-                    explicit_stop_ids=tuple(stop_ids),
-                    location_phrases=tuple(parsed.location_phrases),
-                    effect_hint=parsed.effect_hint,
-                    cause_hint=parsed.cause_hint,
-                    style_intent=parsed.style_intent,
-                    parse_confidence=max(parsed.parse_confidence, 0.7),
-                )
+        if not self.ensure_llm():
+            raise RuntimeError("LLM is required for intent parsing but is unavailable.")
 
-            self.bump_telemetry("parse_fail", 1)
+        parsed = self._llm_extract_intent(text, compact=False)
+        if parsed is None:
+            parsed = self._llm_extract_intent(text, compact=True)
+        if parsed is not None:
+            route_ids = self._merge_unique_tokens(parsed.explicit_route_ids, heuristic_routes)
+            stop_ids = self._merge_unique_tokens(parsed.explicit_stop_ids, heuristic_stops)
+            return IntentParseResult(
+                alert_text=parsed.alert_text,
+                temporal_text=parsed.temporal_text,
+                explicit_route_ids=tuple(route_ids),
+                explicit_stop_ids=tuple(stop_ids),
+                location_phrases=tuple(parsed.location_phrases),
+                effect_hint=parsed.effect_hint,
+                cause_hint=parsed.cause_hint,
+                style_intent=parsed.style_intent,
+                parse_confidence=max(parsed.parse_confidence, 0.7),
+            )
 
-        # Catastrophic-LLM fallback only: keep it minimal and syntax-free.
-        return IntentParseResult(
-            alert_text=self._derive_header_from_text(text),
-            temporal_text=None,
-            explicit_route_ids=tuple(heuristic_routes),
-            explicit_stop_ids=tuple(heuristic_stops),
-            location_phrases=tuple(self.retriever._extract_location_hints(text)),
-            effect_hint=None,
-            cause_hint=None,
-            style_intent="moderate",
-            parse_confidence=0.35,
+        self.bump_telemetry("parse_fail", 1)
+        raise RuntimeError(
+            "LLM intent extraction failed after two attempts. "
+            "Cannot compile without structured intent."
         )
 
     @staticmethod

@@ -87,13 +87,13 @@ class RouteResolverMixin:
                 out.append(rid)
         return self._dedupe_route_ids(out)
 
-    @staticmethod
-    def _route_tokens_from_text(text: str) -> List[str]:
+    def _route_tokens_from_text(self, text: str) -> List[str]:
         tokens: List[str] = []
         src = text or ""
         tokens.extend(re.findall(r"\[([A-Za-z0-9\-\+]+)\]", src))
         tokens.extend(re.findall(r"\b([A-Za-z]{1,4}\d{1,3}[A-Za-z+\-]*)\b", src))
         tokens.extend(re.findall(r"\b([A-Za-z]{1,2})\s+trains\b", src, flags=re.IGNORECASE))
+        tokens.extend(self.route_alias_matches(src))
         return tokens
 
     def _seed_route_entities(self, seed_entities: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:

@@ -114,7 +114,10 @@ def has_explicit_subway_stop_direction(text: str) -> bool:
     )
     if any(p in lower for p in directional_phrases):
         return True
-    if re.search(r"\b[A-Za-z0-9]{2,5}[NS]\b", text or ""):
+    # Directional stop IDs (e.g., 118N, A17S, 902N) should only match when
+    # the token contains at least one digit. This avoids false positives from
+    # route codes like GS/FS.
+    if re.search(r"\b(?=[A-Za-z0-9]{3,8}\b)(?=[A-Za-z0-9]*\d)[A-Za-z0-9]+[NS]\b", text or ""):
         return True
     return False
 

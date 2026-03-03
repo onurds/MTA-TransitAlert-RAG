@@ -116,7 +116,7 @@ Ablation tracks:
 
 1. Rule-only vs rule+LLM enum filling.
 2. With vs without geocode fallback.
-3. Provider comparison (`gemini` vs `xai`; optional `vllm`).
+3. Provider comparison (`gemini` vs `xai`; optional `local`).
 
 ## VII. Status
 
@@ -126,7 +126,7 @@ Completed:
 2. DSPy fully removed.
 3. Monolith split into modular compiler and graph packages.
 4. Confidence-gated fallback and explicit-ID lock policy active.
-5. Gemini + xAI + vLLM runtime provider support retained.
+5. Gemini + xAI + local OpenAI-compatible runtime provider support retained.
 6. Timeout controls standardized for slower reasoning models.
 
 In progress:

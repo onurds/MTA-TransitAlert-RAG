@@ -33,6 +33,10 @@ class GraphRetriever(
         self.graph_path = graph_path
         self.route_nodes_by_id: Dict[str, List[str]] = {}
         self.route_agency_by_node: Dict[str, str] = {}
+        self.route_long_name_by_id: Dict[str, str] = {}
+        self.route_phrase_to_id: Dict[str, str] = {}
+        self.route_code_aliases: Dict[str, str] = {}
+        self.route_display_name_by_id: Dict[str, str] = {}
         self.stop_nodes_by_id: Dict[str, List[str]] = {}
         self.stop_agency_by_id: Dict[str, str] = {}
         self._stop_coords = None

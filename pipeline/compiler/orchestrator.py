@@ -131,7 +131,16 @@ class AlertCompiler:
         affected_segments, alternative_segments = self.retriever._split_affected_and_alternative_segments(instruction)
         affected_hints = self.retriever._extract_location_hints(". ".join(affected_segments))
         alternative_hints = {h.lower() for h in self.retriever._extract_location_hints(". ".join(alternative_segments))}
-        intent_hints = [h for h in intent.location_phrases if str(h).strip().lower() not in alternative_hints]
+        intent_hints = [
+            h
+            for h in intent.location_phrases
+            if str(h).strip().lower() not in alternative_hints and not self.retriever.is_route_name_phrase(str(h))
+        ]
+        # Guardrail: if deterministic parsing found no location cues, do not trust
+        # free-form LLM location phrases (they often mirror route names like
+        # "42 Street Shuttle", which can create false stop matches).
+        if not affected_hints and not self.retriever._has_stop_indication(instruction, affected_hints):
+            intent_hints = []
         location_hints_override = merge_text_tokens(affected_hints, intent_hints)
 
         retrieval = self.retriever.retrieve_affected_entities(
@@ -156,7 +165,7 @@ class AlertCompiler:
         llm_route_ids: List[str] = []
         llm_stop_ids: List[str] = []
         llm_entity_conf = 0.0
-        if self._ensure_llm() and (allowed_route_ids or stop_candidates):
+        if allowed_route_ids or stop_candidates:
             llm_route_ids, llm_stop_ids, llm_entity_conf = self.entity_selector.llm_select_entities(
                 text="\n".join([header, instruction]).strip(),
                 allowed_route_ids=allowed_route_ids,
@@ -247,7 +256,7 @@ class AlertCompiler:
         route_ids_for_text = [e.get("route_id") for e in informed_entities if isinstance(e, dict) and e.get("route_id")]
         header = self.text_renderer.replace_stop_ids_with_names(header, informed_entities)
         header = self.description_generator.render_header_mta(
-            llm=self.llm if self._ensure_llm() else None,
+            llm=self.llm,
             header=header,
             source_text=instruction,
             route_ids=route_ids_for_text,
@@ -256,6 +265,7 @@ class AlertCompiler:
         )
         header = self.text_renderer.clean_header_text(header)
         header = self.text_renderer.format_route_bullets(header, route_ids_for_text)
+        header = self.text_renderer.collapse_route_parenthetical_duplicates(header)
 
         if not header.strip():
             fallback_header = intent.alert_text or derive_header_from_text(instruction)
@@ -267,7 +277,7 @@ class AlertCompiler:
             raise ValueError("Unable to derive a non-empty header from the request.")
 
         description = self.description_generator.generate_or_null(
-            llm=self.llm if self._ensure_llm() else None,
+            llm=self.llm,
             header=header,
             source_text="\n".join([instruction, header]).strip(),
             route_ids=route_ids_for_text,
@@ -278,6 +288,7 @@ class AlertCompiler:
         if description:
             description = self.text_renderer.replace_stop_ids_with_names(description, informed_entities)
             description = self.text_renderer.format_route_bullets(description, route_ids_for_text)
+            description = self.text_renderer.collapse_route_parenthetical_duplicates(description)
 
         alert_id = resolve_alert_id(header, description)
 
@@ -303,10 +314,17 @@ class AlertCompiler:
             return True
         try:
             self.llm = build_langchain_chat_model(config=self._llm_config_active, temperature=0.0)
-            return self.llm is not None
-        except Exception:
-            self.llm = None
-            return False
+            if self.llm is None:
+                raise RuntimeError(
+                    "LLM initialization returned None. Check your provider config and API keys."
+                )
+            return True
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to initialize LLM ({self._llm_config_active.provider}): {exc}"
+            ) from exc
 
     def _set_request_llm_config(self, provider: Optional[str], model: Optional[str]) -> None:
         next_config = with_overrides(self._llm_config, provider=provider, model=model)

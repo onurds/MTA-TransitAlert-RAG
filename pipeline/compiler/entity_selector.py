@@ -22,11 +22,11 @@ class EntitySelector:
         location_hints: Sequence[str],
     ) -> Tuple[List[str], List[str], float]:
         if not self.ensure_llm():
-            return [], [], 0.0
+            raise RuntimeError("LLM is required for entity selection but is unavailable.")
 
         llm = self.llm_getter()
         if llm is None:
-            return [], [], 0.0
+            raise RuntimeError("LLM is required for entity selection but returned None.")
 
         allowed_routes = self._merge_unique_tokens(allowed_route_ids)
         allowed_stop_ids: List[str] = []

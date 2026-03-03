@@ -1531,5 +1531,490 @@
         ]
       }
     }
+  },
+  {
+    "timestamp_utc": "2026-03-03T13:32:09.185311+00:00",
+    "instruction": "[S] 42 Street Shuttle service runs overnight. What's happening?\\nWe're providing additional service for customers during planned work.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:a807bf52480b",
+      "active_period": [
+        {
+          "start": "2026-03-03T08:31:31"
+        }
+      ],
+      "informed_entity": [
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "GS"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "902N"
+        }
+      ],
+      "cause": "CONSTRUCTION",
+      "effect": "ADDITIONAL_SERVICE",
+      "header_text": {
+        "translation": [
+          {
+            "text": "42 Street Shuttle service runs overnight with additional service during planned work",
+            "language": "en"
+          },
+          {
+            "text": "<p>42 Street Shuttle service runs overnight with additional service during planned work</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "42 Street Shuttle 服务夜间运行，并在计划施工期间提供额外服务",
+            "language": "zh"
+          },
+          {
+            "text": "El servicio del Shuttle de la calle 42 opera durante la noche con servicio adicional durante trabajos planificados",
+            "language": "es"
+          }
+        ]
+      },
+      "description_text": {
+        "translation": [
+          {
+            "text": "What's happening?\nWe're providing additional service for customers during planned work.",
+            "language": "en"
+          },
+          {
+            "text": "<p>What's happening?<br/>We're providing additional service for customers during planned work.</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "发生了什么？\n我们在计划施工期间为乘客提供额外服务。",
+            "language": "zh"
+          },
+          {
+            "text": "¿Qué está pasando?\nEstamos proporcionando servicio adicional para los clientes durante trabajos planificados.",
+            "language": "es"
+          }
+        ]
+      },
+      "tts_header_text": {
+        "translation": [
+          {
+            "text": "42 Street Shuttle service runs overnight with additional service during planned work",
+            "language": "en"
+          }
+        ]
+      },
+      "tts_description_text": {
+        "translation": [
+          {
+            "text": "What is happening? We are providing additional service for customers during planned work.",
+            "language": "en"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-03T13:46:34.539860+00:00",
+    "instruction": "[S] 42 Street Shuttle service runs overnight. What's happening?\\nWe're providing additional service for customers during planned work.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:81ae86faf7db",
+      "active_period": [
+        {
+          "start": "2026-03-03T08:45:50"
+        }
+      ],
+      "informed_entity": [
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "GS"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "902N"
+        }
+      ],
+      "cause": "CONSTRUCTION",
+      "effect": "UNKNOWN_EFFECT",
+      "header_text": {
+        "translation": [
+          {
+            "text": "42 Street Shuttle (42 St Shuttle) service runs overnight with additional service during planned work",
+            "language": "en"
+          },
+          {
+            "text": "<p>42 Street Shuttle (42 St Shuttle) service runs overnight with additional service during planned work</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "42 Street Shuttle (42 St Shuttle) 服务夜间运行，并在计划工作期间提供额外服务",
+            "language": "zh"
+          },
+          {
+            "text": "El servicio 42 Street Shuttle (42 St Shuttle) opera durante la noche con servicio adicional durante trabajos planificados",
+            "language": "es"
+          }
+        ]
+      },
+      "description_text": {
+        "translation": [
+          {
+            "text": "What's happening?\nWe're providing additional service for customers during planned work.",
+            "language": "en"
+          },
+          {
+            "text": "<p>What's happening?<br/>We're providing additional service for customers during planned work.</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "发生了什么？\n我们正在计划工作期间为乘客提供额外服务。",
+            "language": "zh"
+          },
+          {
+            "text": "¿Qué está pasando?\nEstamos proporcionando servicio adicional para los clientes durante trabajos planificados.",
+            "language": "es"
+          }
+        ]
+      },
+      "tts_header_text": {
+        "translation": [
+          {
+            "text": "42 Street Shuttle (42nd Street Shuttle) service runs overnight with additional service during planned work",
+            "language": "en"
+          }
+        ]
+      },
+      "tts_description_text": {
+        "translation": [
+          {
+            "text": "What's happening? We are providing additional service for customers during planned work.",
+            "language": "en"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-03T13:50:03.157235+00:00",
+    "instruction": "[S] 42 Street Shuttle service runs overnight. What's happening?\\nWe're providing additional service for customers during planned work.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:dc0c4e15a2fe",
+      "active_period": [
+        {
+          "start": "2026-03-03T08:49:13"
+        }
+      ],
+      "informed_entity": [
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "GS"
+        },
+        {
+          "agency_id": "MTASBWY",
+          "stop_id": "902S"
+        }
+      ],
+      "cause": "CONSTRUCTION",
+      "effect": "ADDITIONAL_SERVICE",
+      "header_text": {
+        "translation": [
+          {
+            "text": "42 St Shuttle service runs overnight with additional service during planned work",
+            "language": "en"
+          },
+          {
+            "text": "<p>42 St Shuttle service runs overnight with additional service during planned work</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "42 St Shuttle 服务夜间运营，并在计划工程期间提供额外服务",
+            "language": "zh"
+          },
+          {
+            "text": "El servicio de shuttle de la 42 St opera durante la noche con servicio adicional durante trabajos planificados",
+            "language": "es"
+          }
+        ]
+      },
+      "description_text": {
+        "translation": [
+          {
+            "text": "What's happening?\nWe're providing additional service for customers during planned work.",
+            "language": "en"
+          },
+          {
+            "text": "<p>What's happening?<br/>We're providing additional service for customers during planned work.</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "发生了什么？\n我们在计划工程期间为乘客提供额外服务。",
+            "language": "zh"
+          },
+          {
+            "text": "¿Qué está pasando?\nEstamos proporcionando servicio adicional para los clientes durante trabajos planificados。",
+            "language": "es"
+          }
+        ]
+      },
+      "tts_header_text": {
+        "translation": [
+          {
+            "text": "42nd Street Shuttle service runs overnight with additional service during planned work",
+            "language": "en"
+          }
+        ]
+      },
+      "tts_description_text": {
+        "translation": [
+          {
+            "text": "What is happening? We are providing additional service for customers during planned work.",
+            "language": "en"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-03T13:59:26.411547+00:00",
+    "instruction": "[S] 42 Street Shuttle service runs overnight. What's happening?\\nWe're providing additional service for customers during planned work.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:5c7c8361a5a8",
+      "active_period": [
+        {
+          "start": "2026-03-03T08:58:56"
+        }
+      ],
+      "informed_entity": [
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "GS"
+        }
+      ],
+      "cause": "CONSTRUCTION",
+      "effect": "ADDITIONAL_SERVICE",
+      "header_text": {
+        "translation": [
+          {
+            "text": "42 St Shuttle (42 St Shuttle) service runs overnight with additional service during planned work",
+            "language": "en"
+          },
+          {
+            "text": "<p>42 St Shuttle (42 St Shuttle) service runs overnight with additional service during planned work</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "42 St Shuttle (42 St Shuttle) 服务夜间运行，并在计划工程期间提供额外服务",
+            "language": "zh"
+          },
+          {
+            "text": "El servicio 42 St Shuttle (42 St Shuttle) opera durante la noche con servicio adicional durante trabajos planificados",
+            "language": "es"
+          }
+        ]
+      },
+      "description_text": {
+        "translation": [
+          {
+            "text": "What's happening?\nWe're providing additional service for customers during planned work.",
+            "language": "en"
+          },
+          {
+            "text": "<p>What's happening?<br/>We're providing additional service for customers during planned work.</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "发生了什么？\n我们正在计划工程期间为乘客提供额外服务。",
+            "language": "zh"
+          },
+          {
+            "text": "¿Qué está pasando?\nEstamos proporcionando servicio adicional para los clientes durante trabajos planificados.",
+            "language": "es"
+          }
+        ]
+      },
+      "tts_header_text": {
+        "translation": [
+          {
+            "text": "42nd Street Shuttle (42nd Street Shuttle) service runs overnight with additional service during planned work",
+            "language": "en"
+          }
+        ]
+      },
+      "tts_description_text": {
+        "translation": [
+          {
+            "text": "What's happening? We're providing additional service for customers during planned work.",
+            "language": "en"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-03T15:57:17.725905+00:00",
+    "instruction": "Eastbound M66 stop on W 65th St at Columbus Ave is being bypassed; use the stop on W 65th at Broadway instead.  See a map of this stop change. What's happening? Building Construction Note: Bus arrival information may not be available/accurate while buses are detoured. Timeframe is from today timestamp until friday 10PM.",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:18414459351a",
+      "active_period": [
+        {
+          "start": "2026-03-03T10:56:35",
+          "end": "2026-03-06T22:00:00"
+        }
+      ],
+      "informed_entity": [
+        {
+          "agency_id": "MTA NYCT",
+          "route_id": "M66"
+        },
+        {
+          "agency_id": "MTA NYCT",
+          "stop_id": "403491"
+        }
+      ],
+      "cause": "CONSTRUCTION",
+      "effect": "DETOUR",
+      "header_text": {
+        "translation": [
+          {
+            "text": "Eastbound [M66] stop on W 65th St at Columbus Ave bypassed; use W 65th St at Broadway",
+            "language": "en"
+          },
+          {
+            "text": "<p>Eastbound [M66] stop on W 65th St at Columbus Ave bypassed; use W 65th St at Broadway</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "东行 [M66] W 65th St at Columbus Ave 站点被绕过；请使用 W 65th St at Broadway",
+            "language": "zh"
+          },
+          {
+            "text": "Parada [M66] hacia el este en W 65th St at Columbus Ave desviada; use W 65th St at Broadway",
+            "language": "es"
+          }
+        ]
+      },
+      "description_text": {
+        "translation": [
+          {
+            "text": "See a map of this stop change. What's happening?\nBuilding Construction Note: Bus arrival information may not be available/accurate while buses are detoured.",
+            "language": "en"
+          },
+          {
+            "text": "<p>See a map of this stop change. What's happening?<br/>Building Construction Note: Bus arrival information may not be available/accurate while buses are detoured.</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "查看此站点变更地图。发生了什么？\n建筑施工注意：公交车绕行期间，公交车到站信息可能不可用/不准确。",
+            "language": "zh"
+          },
+          {
+            "text": "Vea un mapa de este cambio de parada. ¿Qué está pasando?\nNota de construcción de edificios: La información de llegada de autobuses puede no estar disponible/precisa mientras los autobuses están desviados.",
+            "language": "es"
+          }
+        ]
+      },
+      "tts_header_text": {
+        "translation": [
+          {
+            "text": "Eastbound M66 stop on West 65th Street at Columbus Avenue is bypassed; use West 65th Street at Broadway",
+            "language": "en"
+          }
+        ]
+      },
+      "tts_description_text": {
+        "translation": [
+          {
+            "text": "See a map of this stop change. What's happening? Building construction note: Bus arrival information may not be available or accurate while buses are detoured.",
+            "language": "en"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-03T15:59:08.437721+00:00",
+    "instruction": "[S] 42 Street Shuttle service runs overnight. What's happening?\\\\nWe're providing additional service for customers during planned work.\",",
+    "llm_provider": "xai",
+    "llm_model": "grok-4-1-fast-reasoning",
+    "response": {
+      "id": "lmm:generated:d69f171d14b6",
+      "active_period": [
+        {
+          "start": "2026-03-03T10:58:23"
+        }
+      ],
+      "informed_entity": [
+        {
+          "agency_id": "MTASBWY",
+          "route_id": "GS"
+        }
+      ],
+      "cause": "CONSTRUCTION",
+      "effect": "UNKNOWN_EFFECT",
+      "header_text": {
+        "translation": [
+          {
+            "text": "42 Street Shuttle service runs overnight with additional service during planned work",
+            "language": "en"
+          },
+          {
+            "text": "<p>42 Street Shuttle service runs overnight with additional service during planned work</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "42街穿梭列车夜间运行，并在计划施工期间提供额外服务",
+            "language": "zh"
+          },
+          {
+            "text": "El servicio del Shuttle de la calle 42 opera durante la noche con servicio adicional durante trabajos planificados",
+            "language": "es"
+          }
+        ]
+      },
+      "description_text": {
+        "translation": [
+          {
+            "text": "What's happening?\nWe're providing additional service for customers during planned work.",
+            "language": "en"
+          },
+          {
+            "text": "<p>What's happening?<br/>We're providing additional service for customers during planned work.</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "发生了什么？\n我们在计划工作期间为乘客提供额外服务。",
+            "language": "zh"
+          },
+          {
+            "text": "¿Qué está pasando?\nEstamos proporcionando servicio adicional para los clientes durante trabajos planificados.",
+            "language": "es"
+          }
+        ]
+      },
+      "tts_header_text": {
+        "translation": [
+          {
+            "text": "42 Street Shuttle service runs overnight with additional service during planned work",
+            "language": "en"
+          }
+        ]
+      },
+      "tts_description_text": {
+        "translation": [
+          {
+            "text": "What's happening? We're providing additional service for customers during planned work.",
+            "language": "en"
+          }
+        ]
+      }
+    }
   }
 ]

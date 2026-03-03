@@ -70,7 +70,7 @@ Supported providers:
 
 - `gemini`
 - `xai`
-- `vllm`
+- `local` (any OpenAI-compatible local server, e.g. vLLM, mlx-lm)
 
 Key files:
 
@@ -81,6 +81,7 @@ Key files:
 Optional timeout env:
 
 - `LLM_TIMEOUT_SECONDS` (default `180`)
+- `GMAPS_TIMEOUT_SECONDS` (default `8`)
 
 ## Quick Start
 
@@ -110,6 +111,27 @@ python3 scripts/interactive_compile.py --ask-model
 ```
 
 Results append as pretty JSON to `data/interactive_results.json`.
+
+## Gradio Frontend
+
+Local in-process compiler UI:
+
+```bash
+python3 scripts/gradio_app.py
+```
+
+If a local compile gets stuck, use the **Reset Local Compiler** button in the UI, or set a shorter local timeout:
+
+```bash
+python3 scripts/gradio_app.py --local-timeout 120 --llm-timeout 30
+```
+
+API-backed UI (if your FastAPI server is already running):
+
+```bash
+uvicorn main:app --reload
+python3 scripts/gradio_app.py --mode api --api-url http://127.0.0.1:8000/compile
+```
 
 ## Evaluation and Tests
 

@@ -7,7 +7,6 @@ from pipeline.gtfs_rules import (
     EFFECT_ENUMS,
     UNKNOWN_CAUSE,
     UNKNOWN_EFFECT,
-    infer_cause_effect_rule_first,
     normalize_cause,
     normalize_effect,
 )
@@ -28,6 +27,7 @@ class EnumResolver:
         cause_override: Optional[str],
         effect_override: Optional[str],
     ) -> CauseEffectResult:
+        # If explicit overrides were provided by the intent parser, use them.
         if cause_override:
             cause = normalize_cause(cause_override)
             cause_conf = 1.0 if cause in CAUSE_ENUMS else 0.0
@@ -42,24 +42,16 @@ class EnumResolver:
             effect = UNKNOWN_EFFECT
             effect_conf = 0.0
 
-        llm_result = self._llm_enum_fallback(text) if self.ensure_llm() else CauseEffectResult()
-        inferred = infer_cause_effect_rule_first(text)
+        # LLM-only enum classification (no rule-based fallback).
+        llm_result = self._llm_classify_enums(text)
 
-        if cause == UNKNOWN_CAUSE:
-            if llm_result.cause_confidence >= inferred.cause_confidence and llm_result.cause_confidence > cause_conf:
-                cause = llm_result.cause
-                cause_conf = llm_result.cause_confidence
-            elif inferred.cause_confidence > cause_conf:
-                cause = inferred.cause
-                cause_conf = inferred.cause_confidence
+        if cause == UNKNOWN_CAUSE and llm_result.cause_confidence > cause_conf:
+            cause = llm_result.cause
+            cause_conf = llm_result.cause_confidence
 
-        if effect == UNKNOWN_EFFECT:
-            if llm_result.effect_confidence >= inferred.effect_confidence and llm_result.effect_confidence > effect_conf:
-                effect = llm_result.effect
-                effect_conf = llm_result.effect_confidence
-            elif inferred.effect_confidence > effect_conf:
-                effect = inferred.effect
-                effect_conf = inferred.effect_confidence
+        if effect == UNKNOWN_EFFECT and llm_result.effect_confidence > effect_conf:
+            effect = llm_result.effect
+            effect_conf = llm_result.effect_confidence
 
         return CauseEffectResult(
             cause=cause,
@@ -68,7 +60,10 @@ class EnumResolver:
             effect_confidence=effect_conf,
         )
 
-    def _llm_enum_fallback(self, text: str) -> CauseEffectResult:
+    def _llm_classify_enums(self, text: str) -> CauseEffectResult:
+        if not self.ensure_llm():
+            return CauseEffectResult()
+
         llm = self.llm_getter()
         if llm is None:
             return CauseEffectResult()
@@ -96,3 +91,4 @@ class EnumResolver:
             )
         except Exception:
             return CauseEffectResult()
+

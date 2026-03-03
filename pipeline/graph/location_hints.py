@@ -186,7 +186,16 @@ class LocationHintMixin:
         if location_hints:
             return True
         lower = (text or "").lower()
-        stop_markers = ("at ", "between ", "from ", "stop on", "station", "st ", "ave")
+        stop_markers = (
+            " at ",
+            " between ",
+            " from ",
+            " near ",
+            " stop on",
+            " stop id",
+            " station",
+            " intersection",
+        )
         return any(marker in lower for marker in stop_markers)
 
     @staticmethod

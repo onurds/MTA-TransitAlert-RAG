@@ -4,7 +4,7 @@ Shared LLM runtime configuration for compiler and graph retrieval.
 Supported providers:
 - gemini (default)
 - xai (OpenAI-compatible endpoint)
-- vllm (OpenAI-compatible local endpoint, for final Qwen comparison)
+- local (OpenAI-compatible local endpoint, e.g. vLLM, mlx-lm)
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ class RuntimeLLMConfig:
     xai_base_url: str
     xai_model_name: str
     xai_api_key_file: str
-    vllm_base_url: str
-    vllm_model_name: str
+    local_base_url: str
+    local_model_name: str
     llm_timeout_seconds: float
 
 
@@ -46,10 +46,10 @@ def load_llm_config() -> RuntimeLLMConfig:
         ),
         gemini_api_key_file=os.environ.get("GEMINI_API_KEY_FILE", ".gemini_api").strip(),
         xai_base_url=os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1").strip(),
-        xai_model_name=os.environ.get("XAI_MODEL_NAME", "grok-4-1-fast-reasoning").strip(),
+        xai_model_name=os.environ.get("XAI_MODEL_NAME", "grok-4-1-fast-non-reasoning").strip(),
         xai_api_key_file=os.environ.get("XAI_API_KEY_FILE", ".vscode/.xai_api").strip(),
-        vllm_base_url=os.environ.get("VLLM_BASE_URL", "http://localhost:8000/v1").strip(),
-        vllm_model_name=os.environ.get("VLLM_MODEL_NAME", "Qwen/Qwen3.5-35B-A3B").strip(),
+        local_base_url=os.environ.get("LOCAL_BASE_URL", "http://localhost:8080/v1").strip(),
+        local_model_name=os.environ.get("LOCAL_MODEL_NAME", "default").strip(),
         llm_timeout_seconds=float(os.environ.get("LLM_TIMEOUT_SECONDS", "180")),
     )
 
@@ -148,8 +148,8 @@ def with_overrides(
         "xai_base_url": base.xai_base_url,
         "xai_model_name": base.xai_model_name,
         "xai_api_key_file": base.xai_api_key_file,
-        "vllm_base_url": base.vllm_base_url,
-        "vllm_model_name": base.vllm_model_name,
+        "local_base_url": base.local_base_url,
+        "local_model_name": base.local_model_name,
         "llm_timeout_seconds": base.llm_timeout_seconds,
     }
 
@@ -158,8 +158,8 @@ def with_overrides(
             kwargs["gemini_model_name"] = _normalize_gemini_model_name(model_override)
         elif selected_provider == "xai":
             kwargs["xai_model_name"] = model_override
-        elif selected_provider == "vllm":
-            kwargs["vllm_model_name"] = model_override
+        elif selected_provider == "local":
+            kwargs["local_model_name"] = model_override
 
     return RuntimeLLMConfig(**kwargs)
 
@@ -171,8 +171,8 @@ def current_model_label(config: Optional[RuntimeLLMConfig] = None) -> str:
         return f"gemini:{config.gemini_model_name}"
     if config.provider == "xai":
         return f"xai:{config.xai_model_name}@{config.xai_base_url}"
-    if config.provider == "vllm":
-        return f"vllm:{config.vllm_model_name}@{config.vllm_base_url}"
+    if config.provider == "local":
+        return f"local:{config.local_model_name}@{config.local_base_url}"
     return f"{config.provider}:<unsupported>"
 
 
@@ -222,15 +222,15 @@ def build_langchain_chat_model(
             request_timeout=config.llm_timeout_seconds,
         )
 
-    if config.provider == "vllm":
+    if config.provider == "local":
         from langchain_openai import ChatOpenAI  # local import avoids heavy init when unused
 
         return ChatOpenAI(
-            model=config.vllm_model_name,
-            base_url=config.vllm_base_url,
+            model=config.local_model_name,
+            base_url=config.local_base_url,
             api_key="not-needed",
             temperature=temperature,
             request_timeout=config.llm_timeout_seconds,
         )
 
-    raise ValueError("Unsupported LLM_PROVIDER. Use 'gemini', 'xai', or 'vllm'.")
+    raise ValueError("Unsupported LLM_PROVIDER. Use 'gemini', 'xai', or 'local'.")

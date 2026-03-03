@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--provider",
-        choices=["gemini", "xai", "vllm"],
+        choices=["gemini", "xai", "local"],
         default=None,
         help="Optional provider override sent to /compile.",
     )
@@ -97,10 +97,10 @@ def prompt_model_config(default_provider: str | None, default_model: str | None)
     print("\nModel selection (press Enter to keep default).")
     print(f"Current provider: {default_provider or 'server default'}")
     print(f"Current model: {default_model or 'server default'}")
-    provider = input("Provider [gemini/xai/vllm]: ").strip().lower()
+    provider = input("Provider [gemini/xai/local]: ").strip().lower()
     model = input("Model name: ").strip()
 
-    provider_out = provider if provider in {"gemini", "xai", "vllm"} else default_provider
+    provider_out = provider if provider in {"gemini", "xai", "local"} else default_provider
     model_out = model if model else default_model
     return provider_out, model_out
 

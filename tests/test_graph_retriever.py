@@ -79,3 +79,16 @@ def test_explicit_id_validators():
     assert retriever.is_valid_route_id("Q52-SBS")
     assert retriever.is_valid_stop_id("553345")
     assert not retriever.is_valid_stop_id("9999999")
+
+
+def test_route_aliases_normalize_to_gtfs_codes():
+    retriever = _build_retriever()
+    assert retriever.normalize_route_id("SIR") == "SI"
+    assert retriever.normalize_route_id("42 Street Shuttle") == "GS"
+    assert retriever.normalize_route_id("Franklin Avenue Shuttle") == "FS"
+    assert retriever.normalize_route_id("Rockaway Park Shuttle") == "H"
+
+    result = retriever.retrieve_affected_entities("42 Street Shuttle trains are running with delays overnight.")
+    assert result["status"] == "success"
+    routes = {e.get("route_id") for e in result["informed_entities"] if e.get("route_id")}
+    assert "GS" in routes
