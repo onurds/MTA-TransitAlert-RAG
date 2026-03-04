@@ -69,6 +69,7 @@ class EnumResolver:
             return CauseEffectResult()
 
         prompt = (
+            "/no_think\n"
             "Classify the transit alert into GTFS enums. "
             f"Allowed cause enums: {sorted(CAUSE_ENUMS)}. "
             f"Allowed effect enums: {sorted(EFFECT_ENUMS)}. "

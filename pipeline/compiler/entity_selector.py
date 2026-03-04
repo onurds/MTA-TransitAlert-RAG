@@ -31,7 +31,10 @@ class EntitySelector:
         allowed_routes = self._merge_unique_tokens(allowed_route_ids)
         allowed_stop_ids: List[str] = []
         pretty_candidates = []
-        for c in stop_candidates:
+        
+        # Limit to top 20 stop candidates to reduce prompt size and prefill latency
+        sorted_candidates = sorted(stop_candidates, key=lambda c: c.get("score", 0.0), reverse=True)
+        for c in sorted_candidates[:20]:
             stop_id = str(c.get("stop_id", "")).upper().strip()
             route_id = str(c.get("route_id", "")).upper().strip()
             if not stop_id:
@@ -47,6 +50,7 @@ class EntitySelector:
             )
 
         prompt = (
+            "/no_think\n"
             "You are a transit entity selector.\n"
             "Return strict JSON only with keys: selected_route_ids (array), selected_stop_ids (array), confidence (0..1).\n"
             "Rules:\n"

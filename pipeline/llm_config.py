@@ -4,7 +4,9 @@ Shared LLM runtime configuration for compiler and graph retrieval.
 Supported providers:
 - gemini (default)
 - xai (OpenAI-compatible endpoint)
-- local (OpenAI-compatible local endpoint, e.g. vLLM, mlx-lm)
+- local (OpenAI-compatible local endpoint, e.g. Ollama, vLLM, mlx-lm)
+
+Local default: Ollama at http://localhost:11434/v1 with model qwen3.5:9b
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ class RuntimeLLMConfig:
     xai_api_key_file: str
     local_base_url: str
     local_model_name: str
+    local_disable_thinking: bool
     llm_timeout_seconds: float
 
 
@@ -48,8 +51,9 @@ def load_llm_config() -> RuntimeLLMConfig:
         xai_base_url=os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1").strip(),
         xai_model_name=os.environ.get("XAI_MODEL_NAME", "grok-4-1-fast-non-reasoning").strip(),
         xai_api_key_file=os.environ.get("XAI_API_KEY_FILE", ".vscode/.xai_api").strip(),
-        local_base_url=os.environ.get("LOCAL_BASE_URL", "http://localhost:8080/v1").strip(),
-        local_model_name=os.environ.get("LOCAL_MODEL_NAME", "default").strip(),
+        local_base_url=os.environ.get("LOCAL_BASE_URL", "http://localhost:11434/v1").strip(),
+        local_model_name=os.environ.get("LOCAL_MODEL_NAME", "qwen3-30b-ctx8k").strip(),
+        local_disable_thinking=os.environ.get("LOCAL_DISABLE_THINKING", "1").strip() not in ("0", "false", "no"),
         llm_timeout_seconds=float(os.environ.get("LLM_TIMEOUT_SECONDS", "180")),
     )
 
@@ -150,6 +154,7 @@ def with_overrides(
         "xai_api_key_file": base.xai_api_key_file,
         "local_base_url": base.local_base_url,
         "local_model_name": base.local_model_name,
+        "local_disable_thinking": base.local_disable_thinking,
         "llm_timeout_seconds": base.llm_timeout_seconds,
     }
 
@@ -225,12 +230,20 @@ def build_langchain_chat_model(
     if config.provider == "local":
         from langchain_openai import ChatOpenAI  # local import avoids heavy init when unused
 
+        extra: dict = {}
+        if config.local_disable_thinking:
+            extra["extra_body"] = {"think": False}
+
+        # Force short outputs to discourage deep reasoning loops on simple JSON extraction tasks
+        # Qwen3.5 9B reasoning models will jump straight to the answer if they know their token budget is small.
         return ChatOpenAI(
             model=config.local_model_name,
             base_url=config.local_base_url,
             api_key="not-needed",
             temperature=temperature,
             request_timeout=config.llm_timeout_seconds,
+            max_tokens=600,
+            **extra,
         )
 
     raise ValueError("Unsupported LLM_PROVIDER. Use 'gemini', 'xai', or 'local'.")

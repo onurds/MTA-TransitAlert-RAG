@@ -38,8 +38,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--timeout",
         type=float,
-        default=180.0,
-        help="Request timeout in seconds.",
+        default=600.0,
+        help="Request timeout in seconds (default 600 to cover multiple sequential LLM calls).",
     )
     parser.add_argument(
         "--provider",

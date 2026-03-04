@@ -107,6 +107,7 @@ class OutputBuilder:
             return out
 
         prompt = (
+            "/no_think\n"
             "You are generating localization + TTS variants for a GTFS transit alert.\n"
             "Return strict JSON only with keys:\n"
             "header_zh, header_es, description_zh, description_es, tts_header, tts_description, confidence.\n"

@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
         help="Path to golden jsonl dataset.",
     )
     parser.add_argument("--limit", type=int, default=50, help="Number of examples to evaluate (0=all).")
-    parser.add_argument("--timeout", type=float, default=180.0, help="Per-request timeout in seconds.")
+    parser.add_argument("--timeout", type=float, default=600.0, help="Per-request timeout in seconds (default 600 to cover multiple sequential LLM calls).")
     parser.add_argument("--shuffle", action="store_true", help="Shuffle dataset before slicing.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed used when --shuffle is set.")
     parser.add_argument(

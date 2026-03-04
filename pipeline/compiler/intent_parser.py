@@ -75,6 +75,7 @@ class IntentParser:
 
         if compact:
             prompt = (
+                "/no_think\n"
                 "Extract transit intent from operator text. Return strict JSON only with keys:\n"
                 "alert_text, temporal_text, explicit_route_ids, explicit_stop_ids, "
                 "location_phrases, effect_hint, cause_hint, style_intent, parse_confidence.\n"
@@ -83,6 +84,7 @@ class IntentParser:
             )
         else:
             prompt = (
+                "/no_think\n"
                 "You are an MTA alert intent extractor. "
                 "Operators write fully free-form text; extract structured intent.\n"
                 "Return strict JSON only with keys:\n"

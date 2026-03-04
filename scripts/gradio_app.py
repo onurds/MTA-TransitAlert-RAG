@@ -53,7 +53,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Gradio UI for /compile pipeline")
     parser.add_argument("--mode", choices=["local", "api"], default="local", help="Run compiler in-process or call HTTP API")
     parser.add_argument("--api-url", default="http://127.0.0.1:8000/compile", help="API URL used when --mode api")
-    parser.add_argument("--timeout", type=float, default=180.0, help="Request timeout for API mode")
+    parser.add_argument("--timeout", type=float, default=600.0, help="Request timeout for API mode (default 600 to cover multiple sequential LLM calls).")
     parser.add_argument("--local-timeout", type=float, default=120.0, help="Compile timeout in seconds for local mode")
     parser.add_argument(
         "--llm-timeout",

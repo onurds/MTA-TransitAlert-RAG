@@ -117,6 +117,7 @@ class DescriptionGenerator:
             return base
 
         prompt = (
+            "/no_think\n"
             "Rewrite this transit alert header in concise MTA service-alert style.\n"
             "Return strict JSON only: {\"header\": string, \"confidence\": number}.\n"
             "Rules:\n"
@@ -176,6 +177,7 @@ class DescriptionGenerator:
             return self._deterministic_fallback(src, cause)
 
         prompt = (
+            "/no_think\n"
             "You write MTA service alert descriptions in concise official style.\n"
             "Return strict JSON only: {\"description\": string|null, \"confidence\": number}.\n"
             "Rules:\n"

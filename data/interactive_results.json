@@ -2016,5 +2016,317 @@
         ]
       }
     }
+  },
+  {
+    "timestamp_utc": "2026-03-04T12:19:13.360861+00:00",
+    "instruction": "Southbound BxM2 and BxM3 buses are detoured due to utility work at Madison Ave and E 96th St. dates are from 07:15 AM to 09:45 AM today",
+    "llm_provider": "local",
+    "llm_model": "qwen3.5:9b-ctx8k",
+    "response": {
+      "id": "lmm:generated:4fef48a5200d",
+      "active_period": [
+        {
+          "start": "2026-03-04T07:15:00",
+          "end": "2026-03-04T09:45:00"
+        }
+      ],
+      "informed_entity": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM2"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM3"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "404168"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "981012"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "450351"
+        }
+      ],
+      "cause": "UNKNOWN_CAUSE",
+      "effect": "DETOUR",
+      "header_text": {
+        "translation": [
+          {
+            "text": "Southbound [BxM2] and [BxM3] buses detoured at Madison Ave and E 96th St due to utility work",
+            "language": "en"
+          },
+          {
+            "text": "<p>Southbound [BxM2] and [BxM3] buses detoured at Madison Ave and E 96th St due to utility work</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "南行 [BxM2] 和 [BxM3] 巴士因麦迪逊大道和第 96 街东路口施工而绕行",
+            "language": "zh"
+          },
+          {
+            "text": "Autobuses hacia el sur [BxM2] y [BxM3] desviados en Madison Ave y E 96th St debido a trabajos de servicios públicos",
+            "language": "es"
+          }
+        ]
+      },
+      "description_text": {
+        "translation": [
+          {
+            "text": "Southbound [BxM2] and [BxM3] buses are detoured from 07:15 AM to 09:45 AM today due to utility work at Madison Ave and E 96th St. What's happening?\nUtility work.",
+            "language": "en"
+          },
+          {
+            "text": "<p>Southbound [BxM2] and [BxM3] buses are detoured from 07:15 AM to 09:45 AM today due to utility work at Madison Ave and E 96th St. What's happening?<br/>Utility work.</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "今天上午 7:15 至 9:45，南行 [BxM2] 和 [BxM3] 巴士因麦迪逊大道和第 96 街东路口施工而绕行。发生了什么？\n施工。",
+            "language": "zh"
+          },
+          {
+            "text": "Los autobuses hacia el sur [BxM2] y [BxM3] están desviados desde las 07:15 AM hasta las 09:45 AM hoy debido a trabajos de servicios públicos en Madison Ave y E 96th St. ¿Qué está pasando?\nTrabajos de servicios públicos.",
+            "language": "es"
+          }
+        ]
+      },
+      "tts_header_text": {
+        "translation": [
+          {
+            "text": "Southbound buses [BxM2] and [BxM3] are detoured at Madison Avenue and East 96th Street due to utility work.",
+            "language": "en"
+          }
+        ]
+      },
+      "tts_description_text": {
+        "translation": [
+          {
+            "text": "Southbound buses [BxM2] and [BxM3] are detoured from seven fifteen AM to nine forty five AM today due to utility work at Madison Avenue and East 96th Street. What is happening? Utility work.",
+            "language": "en"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-04T13:11:03.480555+00:00",
+    "instruction": "Southbound BxM2 and BxM3 buses are detoured due to utility work at Madison Ave and E 96th St. dates are from 07:15 AM to 09:45 AM today",
+    "llm_provider": "local",
+    "llm_model": "qwen3.5:9b-ctx8k",
+    "response": {
+      "id": "lmm:generated:5bf08c26deb0",
+      "active_period": [
+        {
+          "start": "2026-03-04T07:15:00",
+          "end": "2026-03-04T09:45:00"
+        }
+      ],
+      "informed_entity": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM2"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM3"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "404168"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "981012"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "450351"
+        }
+      ],
+      "cause": "UNKNOWN_CAUSE",
+      "effect": "DETOUR",
+      "header_text": {
+        "translation": [
+          {
+            "text": "Southbound [BxM2] and [BxM3] buses detoured due to utility work at Madison Ave and E 96th St",
+            "language": "en"
+          },
+          {
+            "text": "<p>Southbound [BxM2] and [BxM3] buses detoured due to utility work at Madison Ave and E 96th St</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "南行 [BxM2] 和 [BxM3] 巴士因麦迪逊大道与东 96 街处的公用事业工程而改道",
+            "language": "zh"
+          },
+          {
+            "text": "Los autobuses sur [BxM2] y [BxM3] desviados debido a trabajos de servicios públicos en Madison Ave y E 96th St",
+            "language": "es"
+          }
+        ]
+      },
+      "description_text": {
+        "translation": [
+          {
+            "text": "Southbound [BxM2] and [BxM3] buses are detoured due to utility work at Madison Ave and E 96th St from 07:15 AM to 09:45 AM today. What's happening?\nUtility work at Madison Ave and E 96th St.",
+            "language": "en"
+          },
+          {
+            "text": "<p>Southbound [BxM2] and [BxM3] buses are detoured due to utility work at Madison Ave and E 96th St from 07:15 AM to 09:45 AM today. What's happening?<br/>Utility work at Madison Ave and E 96th St.</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "南行 [BxM2] 和 [BxM3] 巴士因麦迪逊大道与东 96 街处的公用事业工程而改道，时间为今天上午 07:15 至 09:45。发生了什么？\n麦迪逊大道与东 96 街处的公用事业工程",
+            "language": "zh"
+          },
+          {
+            "text": "Los autobuses sur [BxM2] y [BxM3] están desviados debido a trabajos de servicios públicos en Madison Ave y E 96th St desde las 07:15 AM hasta las 09:45 AM hoy. ¿Qué está pasando?\nTrabajos de servicios públicos en Madison Ave y E 96th St",
+            "language": "es"
+          }
+        ]
+      },
+      "tts_header_text": {
+        "translation": [
+          {
+            "text": "Southbound BxM2 and BxM3 buses are detoured due to utility work at Madison Avenue and East 96th Street",
+            "language": "en"
+          }
+        ]
+      },
+      "tts_description_text": {
+        "translation": [
+          {
+            "text": "Southbound BxM2 and BxM3 buses are detoured due to utility work at Madison Avenue and East 96th Street from 07:15 AM to 09:45 AM today. What is happening? Utility work at Madison Avenue and East 96th Street",
+            "language": "en"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-04T13:28:15.992253+00:00",
+    "instruction": "Southbound BxM2 and BxM3 buses are detoured due to utility work at Madison Ave and E 96th St. dates are from 07:15 AM to 09:45 AM today",
+    "llm_provider": "local",
+    "llm_model": "qwen3-30b-ctx8k",
+    "response": {
+      "id": "lmm:generated:8583dd3cb675",
+      "active_period": [
+        {
+          "start": "2026-03-04T07:15:00",
+          "end": "2026-03-04T09:45:00"
+        }
+      ],
+      "informed_entity": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM2"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM3"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "404168"
+        }
+      ],
+      "cause": "UNKNOWN_CAUSE",
+      "effect": "DETOUR",
+      "header_text": {
+        "translation": [
+          {
+            "text": "Southbound [BxM2] and [BxM3] buses detoured due to utility work at Madison Ave and E 96th St, 07:15 AM - 09:45 AM today",
+            "language": "en"
+          },
+          {
+            "text": "<p>Southbound [BxM2] and [BxM3] buses detoured due to utility work at Madison Ave and E 96th St, 07:15 AM - 09:45 AM today</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "因麦迪逊大道和东96街的公用事业施工，今日上午07:15至09:45，南行[BxM2]和[BxM3]公交车改道",
+            "language": "zh"
+          },
+          {
+            "text": "Los autobuses sur en [BxM2] y [BxM3] se desvían debido a trabajos de servicios públicos en Madison Ave y E 96th St, de 07:15 a 09:45 horas hoy",
+            "language": "es"
+          }
+        ]
+      },
+      "description_text": null,
+      "tts_header_text": {
+        "translation": [
+          {
+            "text": "Southbound BxM2 and BxM3 buses are detoured due to utility work at Madison Avenue and East 96th Street from 7:15 AM to 9:45 AM today",
+            "language": "en"
+          }
+        ]
+      },
+      "tts_description_text": null
+    }
+  },
+  {
+    "timestamp_utc": "2026-03-04T13:30:01.771070+00:00",
+    "instruction": "Southbound BxM2 and BxM3 buses are detoured due to utility work at Madison Ave and E 96th St. dates are from 07:15 AM to 09:45 AM today",
+    "llm_provider": "local",
+    "llm_model": "qwen3-30b-ctx8k",
+    "response": {
+      "id": "lmm:generated:782a0c9404f6",
+      "active_period": [
+        {
+          "start": "2026-03-04T07:15:00",
+          "end": "2026-03-04T09:45:00"
+        }
+      ],
+      "informed_entity": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM2"
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM3"
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "404168"
+        }
+      ],
+      "cause": "UNKNOWN_CAUSE",
+      "effect": "DETOUR",
+      "header_text": {
+        "translation": [
+          {
+            "text": "Southbound [BxM2] and [BxM3] buses detoured due to utility work at Madison Ave and E 96th St, 07:15 AM - 09:45 AM today",
+            "language": "en"
+          },
+          {
+            "text": "<p>Southbound [BxM2] and [BxM3] buses detoured due to utility work at Madison Ave and E 96th St, 07:15 AM - 09:45 AM today</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "因麦迪逊大道和东96街的公用事业施工，今日上午07:15至09:45，南行[BxM2]和[BxM3]公交车改道",
+            "language": "zh"
+          },
+          {
+            "text": "Los autobuses sur en [BxM2] y [BxM3] se desvían debido a trabajos de servicios públicos en Madison Ave y E 96th St, de 07:15 a 09:45 horas hoy",
+            "language": "es"
+          }
+        ]
+      },
+      "description_text": null,
+      "tts_header_text": {
+        "translation": [
+          {
+            "text": "Southbound BxM2 and BxM3 buses are detoured due to utility work at Madison Avenue and East 96th Street from 7:15 AM to 9:45 AM today",
+            "language": "en"
+          }
+        ]
+      },
+      "tts_description_text": null
+    }
   }
 ]
