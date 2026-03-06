@@ -20,6 +20,7 @@ class GraphIndexMixin:
     _stop_coords: Optional[np.ndarray]
     _stop_tree_nodes: List[str]
     route_long_name_by_id: Dict[str, str]
+    route_short_name_by_id: Dict[str, str]
     route_phrase_to_id: Dict[str, str]
     route_code_aliases: Dict[str, str]
     route_display_name_by_id: Dict[str, str]
@@ -38,9 +39,11 @@ class GraphIndexMixin:
         self.route_nodes_by_id.clear()
         self.route_agency_by_node.clear()
         self.route_long_name_by_id.clear()
+        self.route_short_name_by_id.clear()
         self.route_phrase_to_id.clear()
         self.route_display_name_by_id.clear()
         self.route_code_aliases = {"SIR": "SI"}
+        stop_name_phrases = self._stop_name_phrase_index()
 
         for node, attrs in self.G.nodes(data=True):
             if attrs.get("type") != "Route":
@@ -48,9 +51,22 @@ class GraphIndexMixin:
 
             route_id = self.to_public_route_id(node)
             self.route_nodes_by_id.setdefault(route_id, []).append(node)
+            short_name = str(attrs.get("short_name", "") or "").strip()
             long_name = str(attrs.get("long_name", "") or "").strip()
+            if short_name:
+                self.route_short_name_by_id.setdefault(route_id, short_name)
             if long_name:
                 self.route_long_name_by_id.setdefault(route_id, long_name)
+            for phrase in self._route_alias_phrases(
+                route_id=route_id,
+                short_name=short_name,
+                long_name=long_name,
+            ):
+                self._register_route_phrase_alias(
+                    phrase=phrase,
+                    route_id=route_id,
+                    stop_name_phrases=stop_name_phrases,
+                )
 
             namespace = self._namespace_from_node(node)
             agency_id = AGENCY_ID_BY_GTFS_NAMESPACE.get(namespace, "MTA NYCT")
@@ -59,32 +75,107 @@ class GraphIndexMixin:
         for rid in self.route_nodes_by_id:
             self.route_nodes_by_id[rid].sort()
 
-        # Build canonical phrase aliases from graph route long names.
-        for rid, long_name in self.route_long_name_by_id.items():
-            norm = self._normalize_route_phrase(long_name)
-            if norm:
-                self.route_phrase_to_id.setdefault(norm, rid)
-
-        # Project-specific aliases (phrase -> canonical GTFS route code).
-        explicit_phrase_aliases = {
-            "sir": "SI",
-            "staten island railway": "SI",
-            "franklin av shuttle": "FS",
-            "franklin avenue shuttle": "FS",
-            "rockaway park shuttle": "H",
-            "42 st shuttle": "GS",
-            "42 street shuttle": "GS",
-        }
-        for phrase, rid in explicit_phrase_aliases.items():
-            norm = self._normalize_route_phrase(phrase)
-            if norm:
-                self.route_phrase_to_id[norm] = rid
-
         # Rider-facing display substitutions for special normalized shuttle codes.
         for rid in ("GS", "FS", "H"):
             long_name = self.route_long_name_by_id.get(rid)
             if long_name:
                 self.route_display_name_by_id[rid] = long_name
+
+    def _route_alias_phrases(
+        self,
+        route_id: str,
+        short_name: str,
+        long_name: str,
+    ) -> List[str]:
+        out: List[str] = []
+        if short_name:
+            out.append(short_name)
+        if long_name:
+            out.append(long_name)
+            # Route long names often include endpoint pairs after separators.
+            # Keep a route-specific "primary" segment only when clearly route-like.
+            primary = re.split(r"\s*-\s*|,\s*|\bvia\b", long_name, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+            primary_norm = self._normalize_route_phrase(primary)
+            if (
+                primary
+                and primary.lower() != long_name.lower()
+                and primary_norm
+                and self._is_route_specific_phrase(primary_norm, route_id)
+            ):
+                out.append(primary)
+        # De-dupe raw forms before normalization.
+        deduped: List[str] = []
+        seen = set()
+        for value in out:
+            key = str(value or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(str(value).strip())
+        return deduped
+
+    def _register_route_phrase_alias(
+        self,
+        phrase: str,
+        route_id: str,
+        stop_name_phrases: set[str],
+    ) -> None:
+        norm = self._normalize_route_phrase(phrase)
+        if not norm:
+            return
+        tokens = norm.split()
+        if len(tokens) == 1:
+            token = tokens[0]
+            # Reject ambiguous one-letter aliases ("a", "f", etc.) that can
+            # collide with ordinary language. Keep richer codes like "sir".
+            if len(token) < 2 and not re.search(r"\d", token):
+                return
+        is_route_specific = self._is_route_specific_phrase(norm, route_id)
+        # Avoid broad aliases like single endpoint names.
+        if len(tokens) < 2 and not is_route_specific:
+            return
+        # Guardrail: if a phrase also looks like a stop name, only keep it when
+        # it carries route-specific cues.
+        if norm in stop_name_phrases and not is_route_specific:
+            return
+        self.route_phrase_to_id.setdefault(norm, route_id)
+
+    def _is_route_specific_phrase(self, norm_phrase: str, route_id: str) -> bool:
+        words = set(norm_phrase.split())
+        route_cues = {
+            "shuttle",
+            "bus",
+            "buses",
+            "train",
+            "trains",
+            "line",
+            "link",
+            "sbs",
+            "railway",
+            "express",
+        }
+        if words & route_cues:
+            return True
+
+        rid_norm = self._normalize_route_phrase(route_id.replace("+", " sbs "))
+        if rid_norm and rid_norm in words:
+            return True
+        return bool(re.search(r"\b[a-z]+\d+\b", norm_phrase))
+
+    def _stop_name_phrase_index(self) -> set[str]:
+        out: set[str] = set()
+        for _node, attrs in self.G.nodes(data=True):
+            if attrs.get("type") != "Stop":
+                continue
+            stop_name = str(attrs.get("name", "") or "").strip()
+            norm = self._normalize_route_phrase(stop_name)
+            if norm:
+                out.add(norm)
+            for part in re.split(r"\s*/\s*|\s+at\s+", stop_name, flags=re.IGNORECASE):
+                part_norm = self._normalize_route_phrase(part)
+                if part_norm and len(part_norm.split()) >= 2:
+                    out.add(part_norm)
+        return out
 
     def _build_stop_indexes(self) -> None:
         self.stop_nodes_by_id.clear()
@@ -153,8 +244,7 @@ class GraphIndexMixin:
         hay = f" {norm_text} "
         hits: List[tuple[int, str]] = []
         for phrase, route_id in self.route_phrase_to_id.items():
-            needle = f" {phrase} "
-            pos = hay.find(needle)
+            pos = self._route_phrase_position_with_context(hay, phrase)
             if pos >= 0:
                 hits.append((pos, route_id))
         hits.sort(key=lambda x: x[0])
@@ -172,6 +262,26 @@ class GraphIndexMixin:
         if not norm:
             return False
         return norm in self.route_phrase_to_id
+
+    @staticmethod
+    def _route_phrase_position_with_context(hay: str, phrase: str) -> int:
+        needle = f" {phrase} "
+        pos = hay.find(needle)
+        if pos < 0:
+            return -1
+
+        tokens = phrase.split()
+        # Guardrail: pure numeric aliases (e.g., "3") should only match when the
+        # surrounding language implies a route reference, not street numbers.
+        if len(tokens) == 1 and tokens[0].isdigit():
+            token = re.escape(tokens[0])
+            context_pattern = re.compile(
+                rf"(?:\[{token}\])|(?:\b{token}\b\s+(?:train|trains|line|service|express)\b)",
+                flags=re.IGNORECASE,
+            )
+            if not context_pattern.search(hay):
+                return -1
+        return pos
 
     @staticmethod
     def _normalize_stop_token(token: str) -> str:

@@ -98,6 +98,144 @@ class EntitySelector:
         except Exception:
             return [], [], 0.0
 
+    def choose_stops_for_single_location(
+        self,
+        stop_entities: Sequence[Dict[str, Any]],
+        source_text: str,
+        stop_candidates: Sequence[Dict[str, Any]],
+        location_hints: Sequence[str],
+        tie_delta: float = 0.05,
+    ) -> List[Dict[str, Any]]:
+        entities = [dict(e) for e in stop_entities if isinstance(e, dict) and e.get("stop_id")]
+        if len(entities) <= 1:
+            return entities
+
+        lower = (source_text or "").lower()
+        is_single_point = (
+            (" near " in lower or " at " in lower)
+            and (" between " not in lower)
+            and (" from " not in lower or " to " not in lower)
+        )
+        if not is_single_point:
+            return entities
+
+        score_by_stop: Dict[str, float] = {}
+        candidate_rows: Dict[str, Dict[str, Any]] = {}
+        for c in stop_candidates:
+            sid = str(c.get("stop_id", "")).upper()
+            if not sid:
+                continue
+            score = float(c.get("score", 0.0))
+            score_by_stop[sid] = max(score_by_stop.get(sid, 0.0), score)
+            prev = candidate_rows.get(sid)
+            if prev is None or score > float(prev.get("score", 0.0)):
+                candidate_rows[sid] = {
+                    "stop_id": sid,
+                    "route_id": str(c.get("route_id", "")).upper(),
+                    "stop_name": str(c.get("stop_name", "")),
+                    "score": score,
+                }
+
+        entities.sort(key=lambda e: score_by_stop.get(str(e.get("stop_id", "")).upper(), 0.0), reverse=True)
+        ranked_rows: List[Dict[str, Any]] = []
+        for entity in entities:
+            sid = str(entity.get("stop_id", "")).upper()
+            if not sid:
+                continue
+            row = candidate_rows.get(sid, {"stop_id": sid, "route_id": "", "stop_name": "", "score": 0.0})
+            if any(str(x.get("stop_id", "")).upper() == sid for x in ranked_rows):
+                continue
+            ranked_rows.append(row)
+
+        if len(ranked_rows) <= 1:
+            return [entities[0]]
+
+        top_route = str(ranked_rows[0].get("route_id", "")).strip().upper()
+        second_route = str(ranked_rows[1].get("route_id", "")).strip().upper()
+        if top_route and second_route and top_route != second_route:
+            return [entities[0]]
+
+        score_gap = float(ranked_rows[0].get("score", 0.0)) - float(ranked_rows[1].get("score", 0.0))
+        if score_gap > max(0.0, float(tie_delta)):
+            return [entities[0]]
+
+        chosen_sid = self._llm_tiebreak_stop_for_single_location(
+            source_text=source_text,
+            location_hints=location_hints,
+            ranked_candidates=ranked_rows[:3],
+        )
+        if not chosen_sid:
+            return [entities[0]]
+
+        for entity in entities:
+            if str(entity.get("stop_id", "")).upper() == chosen_sid:
+                return [entity]
+        return [entities[0]]
+
+    def _llm_tiebreak_stop_for_single_location(
+        self,
+        source_text: str,
+        location_hints: Sequence[str],
+        ranked_candidates: Sequence[Dict[str, Any]],
+    ) -> str:
+        if len(ranked_candidates) < 2:
+            return ""
+        try:
+            if not self.ensure_llm():
+                return ""
+            llm = self.llm_getter()
+            if llm is None:
+                return ""
+        except Exception:
+            return ""
+
+        options: List[Dict[str, Any]] = []
+        allowed: set[str] = set()
+        for c in ranked_candidates[:3]:
+            sid = str(c.get("stop_id", "")).strip().upper()
+            if not sid:
+                continue
+            allowed.add(sid)
+            options.append(
+                {
+                    "stop_id": sid,
+                    "route_id": str(c.get("route_id", "")).strip().upper(),
+                    "stop_name": str(c.get("stop_name", "")).strip(),
+                    "score": round(float(c.get("score", 0.0)), 3),
+                }
+            )
+        if len(options) < 2:
+            return ""
+
+        prompt = (
+            "/no_think\n"
+            "You are a bounded stop disambiguation tiebreaker.\n"
+            "Given a single ambiguous location mention and 2-3 candidate stops, choose exactly one stop ID.\n"
+            "Return strict JSON only: {\"selected_stop_id\": string|null, \"confidence\": number}.\n"
+            "Rules:\n"
+            "- Select only from the provided stop IDs.\n"
+            "- Use context and stop names only; do not invent facts.\n"
+            "- If uncertain, return selected_stop_id=null.\n\n"
+            f"ALERT_TEXT: {source_text}\n"
+            f"LOCATION_HINTS: {list(location_hints)}\n"
+            f"CANDIDATES: {json.dumps(options, ensure_ascii=False)}\n"
+        )
+        try:
+            resp = llm.invoke(prompt)
+            content = getattr(resp, "content", "") if resp is not None else ""
+            if not isinstance(content, str):
+                content = str(content)
+            parsed = self._extract_first_json_object(content)
+            sid = str(parsed.get("selected_stop_id") or "").strip().upper()
+            conf = coerce_confidence(parsed.get("confidence", 0.0))
+            if conf < 0.6:
+                return ""
+            if sid and sid in allowed:
+                return sid
+        except Exception:
+            return ""
+        return ""
+
     @staticmethod
     def prune_stops_for_single_location(
         stop_entities: Sequence[Dict[str, Any]],

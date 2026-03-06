@@ -16,6 +16,7 @@ from .enum_resolver import EnumResolver
 from .intent_parser import IntentParser
 from .models import CompileRequest
 from .output_builder import OutputBuilder
+from .temporal_selector import TemporalSelector
 from .text_renderer import TextRenderer
 from .utils import (
     build_route_entity,
@@ -31,6 +32,7 @@ from .utils import (
 )
 
 CONFIDENCE_THRESHOLD = 0.85
+ENUM_CONFIDENCE_THRESHOLD = 0.6
 
 
 class AlertCompiler:
@@ -40,11 +42,13 @@ class AlertCompiler:
         calendar_path: str = "data/2026_english_calendar.csv",
         timezone: str = "America/New_York",
         confidence_threshold: float = CONFIDENCE_THRESHOLD,
+        enum_confidence_threshold: float = ENUM_CONFIDENCE_THRESHOLD,
     ):
         self.retriever = GraphRetriever(graph_path=graph_path)
         self.temporal_resolver: Optional[TemporalResolver]
         self.tz = ZoneInfo(timezone)
         self.confidence_threshold = confidence_threshold
+        self.enum_confidence_threshold = enum_confidence_threshold
 
         try:
             self.temporal_resolver = TemporalResolver(calendar_path=calendar_path, timezone=timezone)
@@ -75,8 +79,10 @@ class AlertCompiler:
         self.enum_resolver = EnumResolver(
             ensure_llm=self._ensure_llm,
             llm_getter=lambda: self.llm,
+            min_confidence=self.enum_confidence_threshold,
         )
         self.text_renderer = TextRenderer(retriever=self.retriever)
+        self.temporal_selector = TemporalSelector()
         self.output_builder = OutputBuilder(
             ensure_llm=self._ensure_llm,
             llm_getter=lambda: self.llm,
@@ -102,10 +108,18 @@ class AlertCompiler:
         temporal_override = bool(intent.temporal_text or has_temporal_hint(instruction))
         temporal_confidence = 0.4
         active_periods: List[Dict[str, Any]] = []
+        reference_dt = datetime.now(self.tz)
 
         resolved_periods: List[Dict[str, Any]] = []
         if self.temporal_resolver:
-            for p in self.temporal_resolver.resolve_all(temporal_text):
+            llm_periods = self.temporal_selector.resolve_periods(
+                llm=self.llm,
+                temporal_text=temporal_text,
+                full_instruction=instruction,
+                resolver=self.temporal_resolver,
+                reference_dt=reference_dt,
+            )
+            for p in llm_periods:
                 resolved_periods.append({"start": p.start, "end": p.end})
 
         if temporal_override and resolved_periods:
@@ -115,7 +129,7 @@ class AlertCompiler:
             active_periods = resolved_periods
             temporal_confidence = 0.9
         else:
-            now_iso = datetime.now(self.tz).strftime("%Y-%m-%dT%H:%M:%S")
+            now_iso = reference_dt.strftime("%Y-%m-%dT%H:%M:%S")
             active_periods = [{"start": now_iso}]
 
         explicit_route_ids = self.retriever.validate_route_ids(intent.explicit_route_ids)
@@ -139,7 +153,7 @@ class AlertCompiler:
         # Guardrail: if deterministic parsing found no location cues, do not trust
         # free-form LLM location phrases (they often mirror route names like
         # "42 Street Shuttle", which can create false stop matches).
-        if not affected_hints and not self.retriever._has_stop_indication(instruction, affected_hints):
+        if not affected_hints and not self.retriever._has_strong_stop_intent(instruction):
             intent_hints = []
         location_hints_override = merge_text_tokens(affected_hints, intent_hints)
 
@@ -186,10 +200,11 @@ class AlertCompiler:
         elif llm_stop_ids and llm_entity_conf >= 0.65:
             inferred_stop_entities = [build_stop_entity(self.retriever, sid) for sid in llm_stop_ids]
 
-        inferred_stop_entities = self.entity_selector.prune_stops_for_single_location(
+        inferred_stop_entities = self.entity_selector.choose_stops_for_single_location(
             stop_entities=inferred_stop_entities,
-            source_text=header,
+            source_text="\n".join([header, instruction]),
             stop_candidates=stop_candidates,
+            location_hints=retrieval.get("location_hints", []),
         )
 
         route_entities = dedupe_entities(
@@ -281,8 +296,8 @@ class AlertCompiler:
             header=header,
             source_text="\n".join([instruction, header]).strip(),
             route_ids=route_ids_for_text,
-            cause=cause_effect.cause if cause_effect.cause_confidence >= self.confidence_threshold else UNKNOWN_CAUSE,
-            effect=cause_effect.effect if cause_effect.effect_confidence >= self.confidence_threshold else UNKNOWN_EFFECT,
+            cause=cause_effect.cause or UNKNOWN_CAUSE,
+            effect=cause_effect.effect or UNKNOWN_EFFECT,
             current_description=None,
         )
         if description:
@@ -292,12 +307,8 @@ class AlertCompiler:
 
         alert_id = resolve_alert_id(header, description)
 
-        cause_out = normalize_cause(
-            cause_effect.cause if cause_effect.cause_confidence >= self.confidence_threshold else UNKNOWN_CAUSE
-        )
-        effect_out = normalize_effect(
-            cause_effect.effect if cause_effect.effect_confidence >= self.confidence_threshold else UNKNOWN_EFFECT
-        )
+        cause_out = normalize_cause(cause_effect.cause or UNKNOWN_CAUSE)
+        effect_out = normalize_effect(cause_effect.effect or UNKNOWN_EFFECT)
 
         return self.output_builder.build_payload(
             alert_id=alert_id,

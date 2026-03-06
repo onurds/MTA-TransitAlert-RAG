@@ -34,6 +34,7 @@ class GraphRetriever(
         self.route_nodes_by_id: Dict[str, List[str]] = {}
         self.route_agency_by_node: Dict[str, str] = {}
         self.route_long_name_by_id: Dict[str, str] = {}
+        self.route_short_name_by_id: Dict[str, str] = {}
         self.route_phrase_to_id: Dict[str, str] = {}
         self.route_code_aliases: Dict[str, str] = {}
         self.route_display_name_by_id: Dict[str, str] = {}
@@ -69,6 +70,7 @@ class GraphRetriever(
             }
 
         affected_segments, alternative_segments = self._split_affected_and_alternative_segments(text)
+        has_strong_stop_intent = self._has_strong_stop_intent(text)
         if route_ids_override:
             route_ids = self.validate_route_ids(route_ids_override)
             if seed_entities:
@@ -137,6 +139,7 @@ class GraphRetriever(
                 affected_segments=affected_segments,
                 alternative_segments=alternative_segments,
                 location_hints=location_hints,
+                allow_segment_scoring=has_strong_stop_intent,
             )
 
             for stop_id, stop_name, score in route_stop_matches:
@@ -170,7 +173,7 @@ class GraphRetriever(
         informed_entities = self._dedupe_entities(informed_entities + matched_stop_entities)
 
         route_confidence = min(1.0, 0.7 + 0.3 * (len(route_choices) / max(1, len(route_ids))))
-        has_stop_indication = self._has_stop_indication(text, location_hints)
+        has_stop_indication = bool(location_hints) or has_strong_stop_intent
         if not has_stop_indication:
             stop_confidence = 0.95
         elif stop_scores:

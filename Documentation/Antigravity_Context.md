@@ -2,7 +2,7 @@
 
 Implementation memory for the current runtime.
 
-Last updated: March 2, 2026.
+Last updated: March 6, 2026.
 
 ---
 
@@ -29,8 +29,13 @@ Endpoint:
 
 - DSPy is fully removed.
 - Old dual-input and directive-oriented compatibility paths are removed from runtime.
-- Parse mode is LLM-first for intent, deterministic for validation.
+- Parse mode is LLM-first for intent.
+- Temporal interpretation is LLM-first via calendar-aware selection; ISO conversion/validation is deterministic.
 - GTFS graph grounding (NetworkX) is primary for route/stop entities.
+- Route aliasing is data-driven from GTFS route short/long names with stop-overlap collision guards.
+- Stop matching requires strong stop intent for segment-score inference to prevent route-corridor text from creating random stop IDs.
+- Dense-corridor/single-point stop ties use bounded LLM tiebreaking (top 2-3 candidates only).
+- Cause/effect enums are LLM-first with a separate enum confidence floor.
 - Google Maps fallback is confidence-gated and conservative.
 
 ---
@@ -48,7 +53,8 @@ Endpoint:
 - `models.py`: request + internal models.
 - `intent_parser.py`: LLM-first intent extraction with minimal catastrophic fallback.
 - `entity_selector.py`: bounded LLM chooser over allowed candidates.
-- `enum_resolver.py`: rule-first + constrained-LLM cause/effect resolution.
+- `enum_resolver.py`: LLM enum classification with `min_confidence` and strict schema coercion (`OTHER_*` for non-empty invalid labels).
+- `temporal_selector.py`: LLM calendar-aware period selection + deterministic datetime validation/ISO rendering.
 - `text_renderer.py`: header cleaning, stop-id replacement, route bracket formatting.
 - `confidence.py`: confidence scoring and low-confidence preservation checks.
 - `output_builder.py`: GTFS-shaped output assembly, translation and TTS nodes.
@@ -57,7 +63,7 @@ Endpoint:
 
 ### C) Graph package (`pipeline/graph/`)
 
-- `indexes.py`: graph loading, route/stop indexes, ID validation/normalization.
+- `indexes.py`: graph loading, route/stop indexes, ID validation/normalization, and route-alias indexing.
 - `route_resolver.py`: route token extraction and route-node disambiguation.
 - `location_hints.py`: affected/alternative segmentation and location hint extraction.
 - `stop_matcher.py`: route-neighborhood stop scoring and filtering.
@@ -69,21 +75,30 @@ Endpoint:
 
 ## 4) Confidence and Fallback Policy
 
-Global score weights:
+Global entity confidence weights:
 
 - route grounding: `0.35`
 - stop grounding: `0.35`
 - temporal certainty: `0.20`
 - schema validity/completeness: `0.10`
 
-Threshold:
+Global threshold:
 
-- default `0.85`
+- default `0.85` (`CONFIDENCE_THRESHOLD`)
 
-Behavior:
+Enum threshold:
 
-1. If confidence is low or retriever indicates unresolved stop grounding, geocode fallback is attempted.
-2. If confidence remains low, route-only conservative entities are returned.
+- default `0.6` (`ENUM_CONFIDENCE_THRESHOLD`)
+
+Enum fallback behavior:
+
+1. Unknown fallback is used only when enum fields are empty/unavailable after LLM resolution.
+2. Non-empty but invalid enum labels are coerced to `OTHER_CAUSE` / `OTHER_EFFECT` rather than `UNKNOWN_*`.
+
+Entity fallback behavior:
+
+1. If global confidence is low or retriever indicates unresolved stop grounding, geocode fallback is attempted.
+2. If confidence remains low and stop-preservation conditions fail, route-only conservative entities are returned.
 
 ---
 
@@ -92,16 +107,20 @@ Behavior:
 1. Free-form operator input does not require directive syntax.
 2. Explicit valid stop IDs are hard-locked.
 3. Invalid explicit stop IDs are dropped deterministically.
-4. Alternative-stop mentions are excluded from affected-stop output when confidence is weak/conflicted.
-5. Description is nullable and may remain `null` when grounded rider guidance is insufficient.
+4. Stop-name matching is route-scoped (only stops served by selected route-node candidates are scored).
+5. Route-corridor text (for example route long-name endpoint phrases) does not alone imply stop entities without strong stop intent.
+6. Alternative-stop mentions are excluded from affected-stop output when confidence is weak/conflicted.
+7. Temporal relative phrases are anchored to runtime local date/time + timezone in LLM temporal selection context.
+8. Description is nullable and may remain `null` when grounded rider guidance is insufficient.
 
 ---
 
 ## 6) Current Risks
 
-1. Some high-density corridors still need better stop disambiguation under sparse phrasing.
-2. Description style quality depends on source fact richness and bounded LLM confidence.
-3. Translation/TTS latency can increase response time with slower provider models.
+1. Runtime still depends on LLM availability for intent parsing and temporal interpretation.
+2. Enum quality remains model-dependent for borderline phrasing despite improved fallback semantics.
+3. Dense-corridor disambiguation can still be difficult when operator phrasing is sparse and location hints are weak.
+4. Translation/TTS latency can increase response time with slower provider models.
 
 ---
 
@@ -112,11 +131,25 @@ pip install -r requirements.txt
 uvicorn main:app --reload
 python3 scripts/interactive_compile.py --ask-model
 python3 scripts/eval_api.py --limit 50
-pytest tests/test_graph_retriever.py tests/test_compiler.py
+pytest tests/test_graph_retriever.py tests/test_compiler.py tests/test_enum_resolver.py tests/test_temporal_selector.py
 ```
 
-Timeout defaults:
+Key runtime env defaults:
 
-- LLM runtime timeout: `LLM_TIMEOUT_SECONDS=180` (env override).
+- `CONFIDENCE_THRESHOLD=0.85`
+- `ENUM_CONFIDENCE_THRESHOLD=0.6`
+- `LLM_TIMEOUT_SECONDS=180`
+- `GMAPS_TIMEOUT_SECONDS=8`
+
+Client timeout defaults:
+
 - Interactive API timeout: `180s` default (`--timeout` to override).
 - Eval API timeout: `180s` default (`--timeout` to override).
+
+---
+
+## 8) Notes for Future Changes
+
+- If enum stability remains an issue, adding rule-first priors as additive evidence is a safe next lever.
+- If temporal parse misses complex recurrence exceptions, increase calendar context span and allow larger period arrays before considering deterministic recurrence parser expansion.
+- Keep route alias safeguards conservative to avoid route-long-name and stop-name collisions.

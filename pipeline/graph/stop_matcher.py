@@ -39,6 +39,7 @@ class StopMatcherMixin:
         affected_segments: Sequence[str],
         alternative_segments: Sequence[str],
         location_hints: Optional[Sequence[str]] = None,
+        allow_segment_scoring: bool = True,
     ) -> List[Tuple[str, str, float]]:
         if location_hints:
             hint_constraints = [self._parse_hint_constraint(h) for h in location_hints if h]
@@ -67,14 +68,15 @@ class StopMatcherMixin:
                 return []
 
         matches: List[Tuple[str, str, float]] = []
-        for stop_id, stop_name in route_stops:
-            affected_score = self._best_segment_match_score(stop_name, affected_segments)
-            alt_score = self._best_segment_match_score(stop_name, alternative_segments)
-            if affected_score < 0.60:
-                continue
-            if alt_score > 0 and (affected_score - alt_score) < 0.12:
-                continue
-            matches.append((stop_id, stop_name, affected_score))
+        if allow_segment_scoring:
+            for stop_id, stop_name in route_stops:
+                affected_score = self._best_segment_match_score(stop_name, affected_segments)
+                alt_score = self._best_segment_match_score(stop_name, alternative_segments)
+                if affected_score < 0.60:
+                    continue
+                if alt_score > 0 and (affected_score - alt_score) < 0.12:
+                    continue
+                matches.append((stop_id, stop_name, affected_score))
 
         if not matches and location_hints:
             for stop_id, stop_name in route_stops:

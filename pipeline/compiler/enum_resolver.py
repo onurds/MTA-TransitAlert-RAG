@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 from pipeline.gtfs_rules import (
     CAUSE_ENUMS,
@@ -17,9 +17,10 @@ from .utils import extract_first_json_object
 
 
 class EnumResolver:
-    def __init__(self, ensure_llm, llm_getter):
+    def __init__(self, ensure_llm, llm_getter, min_confidence: float = 0.6):
         self.ensure_llm = ensure_llm
         self.llm_getter = llm_getter
+        self.min_confidence = coerce_confidence(min_confidence)
 
     def resolve(
         self,
@@ -27,31 +28,43 @@ class EnumResolver:
         cause_override: Optional[str],
         effect_override: Optional[str],
     ) -> CauseEffectResult:
-        # If explicit overrides were provided by the intent parser, use them.
+        # Parser overrides are treated as hints. Invalid hints do not force UNKNOWN.
+        cause = ""
+        effect = ""
+        cause_conf = 0.0
+        effect_conf = 0.0
+
         if cause_override:
-            cause = normalize_cause(cause_override)
-            cause_conf = 1.0 if cause in CAUSE_ENUMS else 0.0
-        else:
-            cause = UNKNOWN_CAUSE
-            cause_conf = 0.0
+            hint = normalize_cause(cause_override)
+            if hint != UNKNOWN_CAUSE:
+                cause = hint
+                cause_conf = self.min_confidence
 
         if effect_override:
-            effect = normalize_effect(effect_override)
-            effect_conf = 1.0 if effect in EFFECT_ENUMS else 0.0
-        else:
-            effect = UNKNOWN_EFFECT
-            effect_conf = 0.0
+            hint = normalize_effect(effect_override)
+            if hint != UNKNOWN_EFFECT:
+                effect = hint
+                effect_conf = self.min_confidence
 
-        # LLM-only enum classification (no rule-based fallback).
-        llm_result = self._llm_classify_enums(text)
+        llm_result, llm_has_values = self._llm_classify_enums(text)
 
-        if cause == UNKNOWN_CAUSE and llm_result.cause_confidence > cause_conf:
+        # Use LLM enums when present and sufficiently confident.
+        if llm_result.cause and llm_result.cause_confidence >= self.min_confidence:
             cause = llm_result.cause
             cause_conf = llm_result.cause_confidence
 
-        if effect == UNKNOWN_EFFECT and llm_result.effect_confidence > effect_conf:
+        if llm_result.effect and llm_result.effect_confidence >= self.min_confidence:
             effect = llm_result.effect
             effect_conf = llm_result.effect_confidence
+
+        # Unknown fallback only when enum fields are empty after resolution.
+        if not cause:
+            cause = UNKNOWN_CAUSE
+            cause_conf = 0.0 if not llm_has_values else cause_conf
+
+        if not effect:
+            effect = UNKNOWN_EFFECT
+            effect_conf = 0.0 if not llm_has_values else effect_conf
 
         return CauseEffectResult(
             cause=cause,
@@ -60,13 +73,13 @@ class EnumResolver:
             effect_confidence=effect_conf,
         )
 
-    def _llm_classify_enums(self, text: str) -> CauseEffectResult:
+    def _llm_classify_enums(self, text: str) -> Tuple[CauseEffectResult, bool]:
         if not self.ensure_llm():
-            return CauseEffectResult()
+            return CauseEffectResult(cause="", effect="", cause_confidence=0.0, effect_confidence=0.0), False
 
         llm = self.llm_getter()
         if llm is None:
-            return CauseEffectResult()
+            return CauseEffectResult(cause="", effect="", cause_confidence=0.0, effect_confidence=0.0), False
 
         prompt = (
             "/no_think\n"
@@ -81,15 +94,48 @@ class EnumResolver:
         try:
             response = llm.invoke(prompt)
             content = getattr(response, "content", "") if response is not None else ""
-            if not isinstance(content, str):
-                content = str(content)
+            content = self._content_to_text(content)
             json_obj = extract_first_json_object(content)
+            raw_cause = str(json_obj.get("cause", "") or "").strip()
+            raw_effect = str(json_obj.get("effect", "") or "").strip()
+            has_values = bool(raw_cause or raw_effect)
             return CauseEffectResult(
-                cause=normalize_cause(str(json_obj.get("cause", UNKNOWN_CAUSE))),
-                effect=normalize_effect(str(json_obj.get("effect", UNKNOWN_EFFECT))),
+                cause=self._coerce_cause(raw_cause),
+                effect=self._coerce_effect(raw_effect),
                 cause_confidence=coerce_confidence(json_obj.get("cause_confidence", 0.0)),
                 effect_confidence=coerce_confidence(json_obj.get("effect_confidence", 0.0)),
-            )
+            ), has_values
         except Exception:
-            return CauseEffectResult()
+            return CauseEffectResult(cause="", effect="", cause_confidence=0.0, effect_confidence=0.0), False
 
+    @staticmethod
+    def _coerce_cause(raw_value: str) -> str:
+        token = str(raw_value or "").strip().upper()
+        if not token:
+            return ""
+        if token in CAUSE_ENUMS:
+            return token
+        return "OTHER_CAUSE"
+
+    @staticmethod
+    def _coerce_effect(raw_value: str) -> str:
+        token = str(raw_value or "").strip().upper()
+        if not token:
+            return ""
+        if token in EFFECT_ENUMS:
+            return token
+        return "OTHER_EFFECT"
+
+    @staticmethod
+    def _content_to_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("text"):
+                    parts.append(str(item.get("text")))
+                else:
+                    parts.append(str(item))
+            return "\n".join(parts)
+        return str(content)

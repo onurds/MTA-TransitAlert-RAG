@@ -104,17 +104,17 @@ class DescriptionGenerator:
         effect: str,
         style_intent: Optional[str] = None,
     ) -> str:
-        base = self._deterministic_header_polish(header or source_text or "")
+        base = (header or source_text or "").strip()
         if not base:
             return ""
 
-        # Deterministic first to avoid style drift.
+        # No LLM available: keep deterministic cleanup path.
         if llm is None:
-            return base
+            return self._deterministic_header_polish(base)
 
         mode = (style_intent or "moderate").strip().lower()
         if mode not in {"moderate", "mta", "official"}:
-            return base
+            return self._deterministic_header_polish(base)
 
         prompt = (
             "/no_think\n"
@@ -123,6 +123,8 @@ class DescriptionGenerator:
             "Rules:\n"
             "- Preserve all facts.\n"
             "- Do NOT add new stops/routes/times.\n"
+            "- Strip schedule/date/time metadata when it is not a core service-impact fact.\n"
+            "- Remove clauses like 'dates should be', 'time frame is', and explicit date ranges from header text.\n"
             "- Keep it one sentence.\n"
             "- Keep route tokens unchanged when present.\n\n"
             f"INPUT_HEADER: {base}\n"
@@ -139,15 +141,17 @@ class DescriptionGenerator:
             candidate = str(parsed.get("header") or "").strip()
             conf = float(parsed.get("confidence", 0.0) or 0.0)
             if conf < 0.6:
-                return base
+                return self._deterministic_header_polish(base)
             if not candidate:
-                return base
-            candidate = self._deterministic_header_polish(candidate)
+                return self._deterministic_header_polish(base)
+            candidate = self._normalize_spaces(candidate).strip(" ,.;:-")
+            if candidate and candidate[-1] not in ".!?":
+                candidate = f"{candidate}."
             if not self._validate_rendered_header(candidate, source_text, route_ids):
-                return base
+                return self._deterministic_header_polish(base)
             return candidate
         except Exception:
-            return base
+            return self._deterministic_header_polish(base)
 
     def generate_or_null(
         self,
@@ -165,15 +169,14 @@ class DescriptionGenerator:
         if current and current != hdr:
             return current
 
-        # If there are no useful rider-facing details, keep description null.
-        if not self._should_generate_description(src):
-            return None
-
         archetype = self._infer_archetype(hdr, src)
         examples = self._pick_examples(archetype=archetype, header=hdr, k=3)
 
-        # No LLM available -> deterministic minimal description.
+        # No LLM available -> deterministic minimal description with conservative
+        # marker gate to avoid over-producing unguided text.
         if llm is None:
+            if not self._should_generate_description(src):
+                return None
             return self._deterministic_fallback(src, cause)
 
         prompt = (
@@ -184,6 +187,7 @@ class DescriptionGenerator:
             "- Do NOT invent stops/routes/times.\n"
             "- Use only facts from SOURCE_FACTS.\n"
             "- If source facts are insufficient, return description=null.\n"
+            "- Generate a rider-facing description whenever SOURCE_FACTS include a concrete service impact.\n"
             "- Description must NOT be a copy of header.\n"
             "- Keep practical rider guidance first, then optional 'What's happening?' section.\n\n"
             f"HEADER: {hdr}\n"

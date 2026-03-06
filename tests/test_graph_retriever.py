@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from pipeline.graph_retriever import GraphRetriever
 
 
@@ -92,3 +94,40 @@ def test_route_aliases_normalize_to_gtfs_codes():
     assert result["status"] == "success"
     routes = {e.get("route_id") for e in result["informed_entities"] if e.get("route_id")}
     assert "GS" in routes
+
+
+def test_data_driven_long_name_alias_for_f1_when_present():
+    retriever = _build_retriever()
+    if not retriever.is_valid_route_id("F1"):
+        pytest.skip("F1 not present in this GTFS snapshot")
+
+    hits = retriever.route_alias_matches("CULVER LINK F Shuttle Bus service change")
+    assert "F1" in hits
+
+
+def test_single_letter_route_alias_is_not_matched_from_plain_text():
+    retriever = _build_retriever()
+    hits = retriever.route_alias_matches("a service update near 69 st")
+    assert hits == []
+
+
+def test_route_long_name_schedule_text_does_not_infer_stops_without_stop_intent():
+    retriever = _build_retriever()
+    text = "Kings Hwy Station - Kings Plaza B2 buses run on a modified schedule for electrical improvements."
+    result = retriever.retrieve_affected_entities(text)
+
+    assert result["status"] == "success"
+    routes = {e.get("route_id") for e in result["informed_entities"] if e.get("route_id")}
+    stops = [e.get("stop_id") for e in result["informed_entities"] if e.get("stop_id")]
+    assert "B2" in routes
+    assert stops == []
+
+
+def test_numeric_street_phrase_does_not_trigger_numeric_route_alias():
+    retriever = _build_retriever()
+    text = "In the Bronx, Westchester Sq-bound 6X express runs local from 3 Av-138 St to Parkchester."
+    result = retriever.retrieve_affected_entities(text)
+
+    assert result["status"] == "success"
+    routes = {e.get("route_id") for e in result["informed_entities"] if e.get("route_id")}
+    assert "3" not in routes

@@ -82,6 +82,7 @@ Optional timeout env:
 
 - `LLM_TIMEOUT_SECONDS` (default `180`)
 - `GMAPS_TIMEOUT_SECONDS` (default `8`)
+- `ENUM_CONFIDENCE_THRESHOLD` (default `0.6`)
 
 ## Quick Start
 

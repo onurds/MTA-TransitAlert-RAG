@@ -199,6 +199,44 @@ class LocationHintMixin:
         return any(marker in lower for marker in stop_markers)
 
     @staticmethod
+    def _has_strong_stop_intent(text: str) -> bool:
+        lower = (text or "").lower()
+        if not lower.strip():
+            return False
+
+        if re.search(r"\bstop(?:\s*id)?\b", lower):
+            return True
+
+        # High-signal stop-action cues.
+        action_markers = (
+            "bypass",
+            "bypassing",
+            "not make stop",
+            "not make stops",
+            "skip stop",
+            "skip stops",
+            "stop moved",
+            "stop relocated",
+            "board or exit",
+            "use the stop",
+            "detour",
+            "detoured",
+        )
+        if any(m in lower for m in action_markers):
+            return True
+
+        # Explicit geometric location cues.
+        if " near " in lower or " intersection " in lower:
+            return True
+        if re.search(r"\bon\s+.+\s+at\s+.+", lower):
+            return True
+        if re.search(r"\bbetween\s+.+\s+and\s+.+", lower):
+            return True
+        if re.search(r"\bfrom\s+.+\s+to\s+.+", lower):
+            return True
+        return False
+
+    @staticmethod
     def _parse_hint_constraint(hint: str) -> Dict[str, set]:
         tokens = LocationHintMixin._norm_text_tokens(hint)
         numbers = {t for t in tokens if t.isdigit()}

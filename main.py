@@ -22,6 +22,7 @@ GRAPH_PATH = os.environ.get("GRAPH_PATH", "data/mta_knowledge_graph.gpickle")
 CALENDAR_PATH = os.environ.get("CALENDAR_PATH", "data/2026_english_calendar.csv")
 LOCAL_TIMEZONE = os.environ.get("LOCAL_TIMEZONE", "America/New_York")
 CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_THRESHOLD", "0.85"))
+ENUM_CONFIDENCE_THRESHOLD = float(os.environ.get("ENUM_CONFIDENCE_THRESHOLD", "0.6"))
 
 
 class CompileEngine:
@@ -34,6 +35,7 @@ class CompileEngine:
             calendar_path=CALENDAR_PATH,
             timezone=LOCAL_TIMEZONE,
             confidence_threshold=CONFIDENCE_THRESHOLD,
+            enum_confidence_threshold=ENUM_CONFIDENCE_THRESHOLD,
         )
 
     def compile(self, request: CompileRequest) -> Dict:
@@ -63,6 +65,7 @@ async def healthz():
         "graph_path": GRAPH_PATH,
         "calendar_path": CALENDAR_PATH,
         "confidence_threshold": CONFIDENCE_THRESHOLD,
+        "enum_confidence_threshold": ENUM_CONFIDENCE_THRESHOLD,
         "telemetry": dict(engine.compiler.telemetry),
     }
 
