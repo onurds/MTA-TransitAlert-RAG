@@ -47,18 +47,26 @@ class LocationHintMixin:
 
     @staticmethod
     def _clean_location_hint(hint: str) -> str:
-        txt = re.sub(r"\*{1,3}|_{1,3}", "", hint or "").strip()
+        txt = str(hint or "").strip()
         if not txt:
             return ""
+        txt = txt.replace(" & ", " and ")
+        txt = " ".join(txt.split()).strip(" ,.;:-")
+        return txt
 
+    @staticmethod
+    def _clean_extracted_location_hint(hint: str) -> str:
+        txt = str(hint or "").strip()
+        if not txt:
+            return ""
+        txt = re.sub(r"\*{1,3}|_{1,3}", "", txt).strip()
         txt = re.split(r"\b(?:has|have|had|is|are|was|were|will|would|should|can|could|may|might|must)\b", txt, 1, flags=re.IGNORECASE)[0]
         txt = re.sub(r"\s*-\s*no\s+stops?.*$", "", txt, flags=re.IGNORECASE).strip()
         txt = re.sub(r"\bno\s+stops?\s+will\s+be\s+missed\b.*$", "", txt, flags=re.IGNORECASE).strip()
         txt = re.sub(r"\bno\s+stops?\b.*$", "", txt, flags=re.IGNORECASE).strip()
-
         txt = re.sub(r"^(?:the\s+)?(?:stop\s+on|stops?\s+on|on|at|near)\s+", "", txt, flags=re.IGNORECASE).strip()
         txt = txt.replace(" & ", " and ")
-        txt = re.sub(r"\s{2,}", " ", txt).strip(" ,.;:-")
+        txt = " ".join(txt.split()).strip(" ,.;:-")
         return txt
 
     @staticmethod
@@ -132,11 +140,11 @@ class LocationHintMixin:
         for pattern in LOCATION_PATTERNS:
             for match in pattern.findall(text or ""):
                 if isinstance(match, tuple):
-                    pieces = [LocationHintMixin._clean_location_hint(m) for m in match if m and str(m).strip()]
+                    pieces = [LocationHintMixin._clean_extracted_location_hint(m) for m in match if m and str(m).strip()]
                     for piece in pieces:
                         hints.extend(LocationHintMixin._expand_location_hint(piece))
                 else:
-                    candidate = LocationHintMixin._clean_location_hint(match)
+                    candidate = LocationHintMixin._clean_extracted_location_hint(match)
                     hints.extend(LocationHintMixin._expand_location_hint(candidate))
 
         deduped: List[str] = []
@@ -153,8 +161,14 @@ class LocationHintMixin:
     def _merge_location_hints(extracted_hints: Sequence[str], override_hints: Optional[Sequence[str]]) -> List[str]:
         merged: List[str] = []
         seen = set()
-        for raw in list(extracted_hints or []) + list(override_hints or []):
-            hint = LocationHintMixin._clean_location_hint(str(raw or ""))
+        cleaned_inputs = [
+            LocationHintMixin._clean_extracted_location_hint(str(raw or ""))
+            for raw in extracted_hints or []
+        ] + [
+            LocationHintMixin._clean_location_hint(str(raw or ""))
+            for raw in override_hints or []
+        ]
+        for hint in cleaned_inputs:
             for expanded in LocationHintMixin._expand_location_hint(hint):
                 key = expanded.lower()
                 if key in seen:

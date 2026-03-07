@@ -4,7 +4,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
-from pipeline.description_generator import DescriptionGenerator
 from pipeline.graph import GraphRetriever
 from pipeline.gtfs_rules import UNKNOWN_CAUSE, UNKNOWN_EFFECT, normalize_cause, normalize_effect
 from pipeline.llm_config import build_langchain_chat_model, load_llm_config, with_overrides
@@ -18,6 +17,7 @@ from .models import CompileRequest
 from .output_builder import OutputBuilder
 from .temporal_selector import TemporalSelector
 from .text_renderer import TextRenderer
+from .text_mode_resolver import TextModeResolver
 from .utils import (
     build_route_entity,
     build_stop_entity,
@@ -55,7 +55,6 @@ class AlertCompiler:
         except Exception:
             self.temporal_resolver = None
 
-        self.description_generator = DescriptionGenerator(examples_path="data/mta_alerts.json")
         self._llm_config = load_llm_config()
         self._llm_config_active = self._llm_config
         self.llm = None
@@ -64,6 +63,9 @@ class AlertCompiler:
             "explicit_id_invalid_drop": 0,
             "fallback_used": 0,
             "inferred_stop_accept": 0,
+            "text_layout_retry": 0,
+            "text_layout_validation_fail": 0,
+            "text_layout_fallback_used": 0,
         }
 
         self.intent_parser = IntentParser(
@@ -82,6 +84,7 @@ class AlertCompiler:
             min_confidence=self.enum_confidence_threshold,
         )
         self.text_renderer = TextRenderer(retriever=self.retriever)
+        self.text_mode_resolver = TextModeResolver(bump_telemetry=self._bump_telemetry)
         self.temporal_selector = TemporalSelector()
         self.output_builder = OutputBuilder(
             ensure_llm=self._ensure_llm,
@@ -97,8 +100,9 @@ class AlertCompiler:
 
         intent = self.intent_parser.parse(instruction)
 
-        header = intent.alert_text or derive_header_from_text(self.text_renderer.strip_instruction_meta(instruction))
-        header = self.text_renderer.clean_header_text(header)
+        header_hint = intent.alert_text or None
+        header = header_hint or derive_header_from_text(instruction)
+        header = " ".join((header or "").split())
         if not header:
             header = derive_header_from_text(instruction)
         if not header:
@@ -269,37 +273,28 @@ class AlertCompiler:
             informed_entities = conservative_entities(informed_entities)
 
         route_ids_for_text = [e.get("route_id") for e in informed_entities if isinstance(e, dict) and e.get("route_id")]
-        header = self.text_renderer.replace_stop_ids_with_names(header, informed_entities)
-        header = self.description_generator.render_header_mta(
+        header_text, description = self.text_mode_resolver.resolve(
             llm=self.llm,
-            header=header,
-            source_text=instruction,
+            instruction=instruction,
             route_ids=route_ids_for_text,
+            cause=cause_effect.cause or UNKNOWN_CAUSE,
             effect=cause_effect.effect,
-            style_intent=intent.style_intent,
+            text_mode=request.text_mode,
+            header_hint=header_hint if request.text_mode == "rewrite" else None,
         )
-        header = self.text_renderer.clean_header_text(header)
+        header = self.text_renderer.replace_stop_ids_with_names(header_text, informed_entities)
         header = self.text_renderer.format_route_bullets(header, route_ids_for_text)
         header = self.text_renderer.collapse_route_parenthetical_duplicates(header)
 
         if not header.strip():
-            fallback_header = intent.alert_text or derive_header_from_text(instruction)
+            fallback_header = header_hint or derive_header_from_text(instruction)
             header = self.text_renderer.format_route_bullets(
-                self.text_renderer.clean_header_text(fallback_header).strip(),
+                " ".join((fallback_header or "").split()).strip(),
                 route_ids_for_text,
             )
         if not header:
             raise ValueError("Unable to derive a non-empty header from the request.")
 
-        description = self.description_generator.generate_or_null(
-            llm=self.llm,
-            header=header,
-            source_text="\n".join([instruction, header]).strip(),
-            route_ids=route_ids_for_text,
-            cause=cause_effect.cause or UNKNOWN_CAUSE,
-            effect=cause_effect.effect or UNKNOWN_EFFECT,
-            current_description=None,
-        )
         if description:
             description = self.text_renderer.replace_stop_ids_with_names(description, informed_entities)
             description = self.text_renderer.format_route_bullets(description, route_ids_for_text)

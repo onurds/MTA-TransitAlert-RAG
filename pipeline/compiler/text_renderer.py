@@ -8,41 +8,6 @@ class TextRenderer:
     def __init__(self, retriever: Any):
         self.retriever = retriever
 
-    @staticmethod
-    def clean_header_text(text: str) -> str:
-        out = (text or "").strip()
-        if not out:
-            return out
-
-        stop_markers = [
-            r"\bwhat(?:['’])?s\s+happening\??",
-            r"\bsee\s+a\s+map\b",
-            r"\bplan\s+your\s+trip\b",
-            r"\b(?:the\s+)?dates?\s+(?:should\s+be|are|is)\b",
-            r"\bdates?\s*:",
-            r"\btime(?:\s*frame)?\s+(?:is|are)\b",
-        ]
-        cut_positions = []
-        for marker in stop_markers:
-            m = re.search(marker, out, flags=re.IGNORECASE)
-            if m:
-                cut_positions.append(m.start())
-        if cut_positions:
-            out = out[: min(cut_positions)].strip()
-
-        return re.sub(r"\s{2,}", " ", out).strip(" ,.;:-")
-
-    @staticmethod
-    def strip_instruction_meta(text: str) -> str:
-        out = (text or "").strip()
-        if not out:
-            return out
-        out = re.sub(r"\b(?:the\s+)?dates?\s+(?:should\s+be|are|is)\s+.+$", "", out, flags=re.IGNORECASE | re.DOTALL).strip()
-        out = re.sub(r"\bdates?\s*:\s*.+$", "", out, flags=re.IGNORECASE | re.DOTALL).strip()
-        out = re.sub(r"\btime(?:\s*frame)?\s+(?:is|are)\s+.+$", "", out, flags=re.IGNORECASE | re.DOTALL).strip()
-        out = re.sub(r"\s{2,}", " ", out).strip(" ,")
-        return out
-
     def replace_stop_ids_with_names(self, text: str, entities: Sequence[Dict[str, Any]]) -> str:
         out = (text or "").strip()
         if not out:

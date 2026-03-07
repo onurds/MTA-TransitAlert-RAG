@@ -89,6 +89,9 @@ def test_route_aliases_normalize_to_gtfs_codes():
     assert retriever.normalize_route_id("42 Street Shuttle") == "GS"
     assert retriever.normalize_route_id("Franklin Avenue Shuttle") == "FS"
     assert retriever.normalize_route_id("Rockaway Park Shuttle") == "H"
+    assert retriever.normalize_route_id("B41-SBS") == "B41"
+    assert retriever.normalize_route_id("Q52-SBS") == "Q52+"
+    assert retriever.normalize_route_id("Q53-SBS") == "Q53+"
 
     result = retriever.retrieve_affected_entities("42 Street Shuttle trains are running with delays overnight.")
     assert result["status"] == "success"
@@ -131,3 +134,21 @@ def test_numeric_street_phrase_does_not_trigger_numeric_route_alias():
     assert result["status"] == "success"
     routes = {e.get("route_id") for e in result["informed_entities"] if e.get("route_id")}
     assert "3" not in routes
+
+
+def test_prefixed_bus_route_list_expands_family_prefix_before_numeric_subway_routes():
+    retriever = _build_retriever()
+    text = (
+        "These buses are delayed: B: 4, 4A, 5, 6, 8, 11, 12, 13, 17, 19, 21, 22, 24, 25, 26, 27, "
+        "28, 29, 30, 31, 32, 33, 34, 35, 36, 38, 39, 40, 41, 41-SBS, 42. "
+        "We're running as much service as we can with the buses and operators we have available."
+    )
+    route_ids = retriever._extract_route_ids(text)
+
+    assert "B4" in route_ids
+    assert "B6" in route_ids
+    assert "B41" in route_ids
+    assert "B42" in route_ids
+    assert "4" not in route_ids
+    assert "5" not in route_ids
+    assert "6" not in route_ids

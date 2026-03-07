@@ -84,24 +84,31 @@ class GraphRetriever(
             )
 
         if not route_ids:
+            location_hints = self._merge_location_hints(
+                [],
+                location_hints_override,
+            ) if location_hints_override else self._merge_location_hints(
+                self._extract_location_hints(text),
+                None,
+            )
             return {
                 "status": "error",
                 "error": "No route IDs could be resolved",
                 "informed_entities": self._seed_route_entities(seed_entities),
                 "route_confidence": 0.0,
                 "stop_confidence": 0.0,
-                "location_hints": self._merge_location_hints(
-                    self._extract_location_hints(text),
-                    location_hints_override,
-                ),
+                "location_hints": location_hints,
                 "fallback_needed": True,
                 "route_ids": [],
             }
 
         route_choices: List[RouteChoice] = []
         location_hints = self._merge_location_hints(
-            self._extract_location_hints(text),
+            [],
             location_hints_override,
+        ) if location_hints_override else self._merge_location_hints(
+            self._extract_location_hints(text),
+            None,
         )
 
         for route_id in route_ids:

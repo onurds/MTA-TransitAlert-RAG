@@ -293,6 +293,8 @@ class GraphIndexMixin:
         rid = self.route_code_aliases.get(rid, rid)
         if rid in self.route_nodes_by_id:
             return rid
+        if rid.endswith("+") and rid[:-1] in self.route_nodes_by_id:
+            return rid[:-1]
 
         phrase = self._normalize_route_phrase(str(token or ""))
         if phrase and phrase in self.route_phrase_to_id:

@@ -67,6 +67,8 @@ def test_gs_token_does_not_block_directional_stop_collapse():
     assert "902N" not in stop_ids
 
 
+
+
 def test_output_key_order_and_nullable_fields_present():
     """This test requires a working LLM. Skip if LLM is unavailable."""
     compiler = _build_compiler()
@@ -113,4 +115,3 @@ def test_compile_fails_without_llm():
         compiler.compile(
             CompileRequest(instruction="Southbound Q52-SBS will not stop at stop id 553345.")
         )
-

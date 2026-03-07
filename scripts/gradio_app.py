@@ -49,6 +49,17 @@ def _render_json_html(obj: Any) -> str:
     return highlight(raw, JsonLexer(), formatter)
 
 
+def make_compile_request(instruction: str, provider: str, model: str, text_mode: str) -> CompileRequest:
+    p_val = provider.strip() if provider.strip() else None
+    m_val = model.strip() if model.strip() else None
+    return CompileRequest(
+        instruction=instruction.strip(),
+        llm_provider=p_val,
+        llm_model=m_val,
+        text_mode=text_mode,
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Gradio UI for /compile pipeline")
     parser.add_argument("--mode", choices=["local", "api"], default="local", help="Run compiler in-process or call HTTP API")
@@ -104,19 +115,12 @@ def build_app(args: argparse.Namespace) -> gr.Blocks:
         msg = init_compiler()
         return msg
 
-    def handle_compile(instruction: str, provider: str, model: str):
+    def handle_compile(instruction: str, provider: str, model: str, text_mode: str):
         if not instruction or not instruction.strip():
             return {}, "", "Error: Instruction cannot be empty"
 
-        p_val = provider.strip() if provider.strip() else None
-        m_val = model.strip() if model.strip() else None
-
         try:
-            req = CompileRequest(
-                instruction=instruction.strip(),
-                llm_provider=p_val,
-                llm_model=m_val
-            )
+            req = make_compile_request(instruction, provider, model, text_mode)
         except Exception as e:
             return {}, "", f"Error creating request: {e}"
 
@@ -143,13 +147,15 @@ def build_app(args: argparse.Namespace) -> gr.Blocks:
                 return {}, "", f"Local compile error: {e}"
 
         highlighted_html = _render_json_html(result)
-        return result, highlighted_html, "Successfully compiled."
+        return result, highlighted_html, f"Successfully compiled ({req.text_mode} mode)."
 
 
     with gr.Blocks(title="MTA Transit Alert Compiler") as app:
         gr.Markdown("# MTA Transit Alert Compiler")
         mode_text = f"**API Mode** (`{args.api_url}`)" if args.mode == "api" else "**Local In-Process Mode**"
         gr.Markdown(f"Runtime Info: {mode_text}")
+        default_mode_state = gr.State("default")
+        rewrite_mode_state = gr.State("rewrite")
 
         instruction_in = gr.Textbox(
             label="Instruction",
@@ -172,6 +178,7 @@ def build_app(args: argparse.Namespace) -> gr.Blocks:
 
         with gr.Row():
             compile_btn = gr.Button("Compile", variant="primary")
+            rewrite_btn = gr.Button("Rewrite")
             if args.mode == "local":
                 reset_btn = gr.Button("Refresh Local State")
 
@@ -188,7 +195,13 @@ def build_app(args: argparse.Namespace) -> gr.Blocks:
 
         compile_btn.click(
             fn=handle_compile,
-            inputs=[instruction_in, provider_in, model_in],
+            inputs=[instruction_in, provider_in, model_in, default_mode_state],
+            outputs=[output_json, output_pretty, status_out],
+        )
+
+        rewrite_btn.click(
+            fn=handle_compile,
+            inputs=[instruction_in, provider_in, model_in, rewrite_mode_state],
             outputs=[output_json, output_pretty, status_out],
         )
 

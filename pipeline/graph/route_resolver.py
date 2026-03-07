@@ -90,11 +90,38 @@ class RouteResolverMixin:
     def _route_tokens_from_text(self, text: str) -> List[str]:
         tokens: List[str] = []
         src = text or ""
+        tokens.extend(self._prefixed_route_list_tokens(src))
         tokens.extend(re.findall(r"\[([A-Za-z0-9\-\+]+)\]", src))
         tokens.extend(re.findall(r"\b([A-Za-z]{1,4}\d{1,3}[A-Za-z+\-]*)\b", src))
         tokens.extend(re.findall(r"\b([A-Za-z]{1,2})\s+trains\b", src, flags=re.IGNORECASE))
         tokens.extend(self.route_alias_matches(src))
         return tokens
+
+    def _prefixed_route_list_tokens(self, text: str) -> List[str]:
+        out: List[str] = []
+        src = text or ""
+        if not src:
+            return out
+
+        for prefix, raw_list in re.findall(r"\b([A-Za-z]{1,3})\s*:\s*([^\n.]+)", src):
+            prefix_token = prefix.strip().upper()
+            if not prefix_token:
+                continue
+
+            expanded: List[str] = []
+            for raw_item in re.split(r"\s*,\s*|\s+and\s+|\s*/\s*", raw_list.strip(), flags=re.IGNORECASE):
+                item = raw_item.strip()
+                if not item:
+                    continue
+                if not re.fullmatch(r"\d{1,3}[A-Za-z]?(?:-SBS|SBS|\+)?", item, flags=re.IGNORECASE):
+                    continue
+                route_id = self.normalize_route_id(f"{prefix_token}{item}")
+                if route_id in self.route_nodes_by_id:
+                    expanded.append(route_id)
+
+            if len(expanded) >= 2:
+                out.extend(expanded)
+        return out
 
     def _seed_route_entities(self, seed_entities: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
         entities: List[Dict[str, Any]] = []

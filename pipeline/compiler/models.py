@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -45,6 +45,7 @@ class CompileRequest(BaseModel):
     instruction: str = ""
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+    text_mode: Literal["default", "rewrite"] = "default"
 
 
 @dataclass(frozen=True)

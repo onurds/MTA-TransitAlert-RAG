@@ -59,7 +59,6 @@ pipeline/
 │   └── geocode_fallback.py
 ├── graph_retriever.py  # compatibility re-export
 ├── temporal_resolver.py
-├── description_generator.py
 ├── gtfs_rules.py
 └── llm_config.py
 ```
