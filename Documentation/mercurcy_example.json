@@ -1,0 +1,63 @@
+{
+    "id": "lmm:planned_work:29983",
+    "header": "In Brooklyn and Lower Manhattan, no Inwood-bound [A] at High St, Fulton St, Chambers St, Canal St and Spring St",
+    "description": "Inwood-bound [A] runs via the [F] from Jay St-MetroTech to W 4 St-Wash Sq.\n\nTravel Alternatives:\nFor High St, use the nearby York St [F] station instead.\n\nFor Fulton St, take the [J] via transfer at the Delancey St-Essex St [F] station. Or, use the nearby World Trade Center [accessibility icon] | [E] station via transfer at W 4 St-Wash Sq.\n\nFor Chambers St/World Trade Center, Canal St and Spring St, take the [E] or downtown [A][C] via transfer at W 4 St-Wash Sq.\n\nWhat's happening?\nTrack maintenance \n\n[accessibility icon] This service change affects one or more ADA accessible stations and these travel alternatives may not be fully accessible. Please contact 511 to plan your trip.",
+    "url": null,
+    "effect": "UNKNOWN_EFFECT",
+    "cause": "UNKNOWN_CAUSE",
+    "severity": null,
+    "tts_header": null,
+    "tts_description": null,
+    "header_translations": [
+        {
+            "text": "In Brooklyn and Lower Manhattan, no Inwood-bound [A] at High St, Fulton St, Chambers St, Canal St and Spring St",
+            "language": "en"
+        },
+        {
+            "text": "<p>In Brooklyn and Lower Manhattan, no Inwood-bound [A] at <b>High St</b>, <b>Fulton St</b>, <b>Chambers St</b>, <b>Canal St</b> and <b>Spring St</b></p>",
+            "language": "en-html"
+        }
+    ],
+    "description_translations": [
+        {
+            "text": "Inwood-bound [A] runs via the [F] from Jay St-MetroTech to W 4 St-Wash Sq.\n\nTravel Alternatives:\nFor High St, use the nearby York St [F] station instead.\n\nFor Fulton St, take the [J] via transfer at the Delancey St-Essex St [F] station. Or, use the nearby World Trade Center [accessibility icon] | [E] station via transfer at W 4 St-Wash Sq.\n\nFor Chambers St/World Trade Center, Canal St and Spring St, take the [E] or downtown [A][C] via transfer at W 4 St-Wash Sq.\n\nWhat's happening?\nTrack maintenance \n\n[accessibility icon] This service change affects one or more ADA accessible stations and these travel alternatives may not be fully accessible. Please contact 511 to plan your trip.",
+            "language": "en"
+        },
+        {
+            "text": "<p>Inwood-bound [A] runs via the [F] from <b>Jay St-MetroTech</b> to <b>W 4 St-Wash Sq</b>.</p><p style=\"min-height:10px\"></p><p><strong>Travel Alternatives:</strong></p><p>For <b>High St</b>, use the nearby <b>York St</b> [F] station instead.</p><p style=\"min-height:10px\"></p><p>For <b>Fulton St</b>, take the [J] via transfer at the <b>Delancey St-Essex St</b> [F] station. Or, use the nearby <b>World Trade Center</b> [accessibility icon] | [E] station via transfer at <b>W 4 St-Wash Sq</b>.</p><p style=\"min-height:10px\"></p><p>For <b>Chambers St</b>/<b>World Trade Center</b>, <b>Canal St</b> and <b>Spring St</b>, take the [E] or downtown [A][C] via transfer at <b>W 4 St-Wash Sq</b>.</p><p style=\"min-height:10px\"></p><p><strong>What's happening?</strong></p><p>Track maintenance </p><p style=\"min-height:10px\"></p><p>[accessibility icon] This service change affects one or more ADA accessible stations and these travel alternatives may not be fully accessible. Please contact 511 to plan your trip.</p>",
+            "language": "en-html"
+        }
+    ],
+    "url_translations": null,
+    "tts_header_translations": null,
+    "tts_description_translations": null,
+    "active_periods": [
+        {
+            "start": "2026-03-07T07:45:00",
+            "end": "2026-03-09T12:00:00"
+        }
+    ],
+    "informed_entities": [
+        {
+            "agency_id": "MTASBWY",
+            "route_id": "A",
+            "mercury_entity_selector": {
+                "sort_order": "MTASBWY:A:18"
+            }
+        }
+    ],
+    "mercury_alert": {
+        "created_at": "1769795258",
+        "updated_at": "1770217446",
+        "alert_type": "Planned - Reroute",
+        "display_before_active": "3600",
+        "human_readable_active_period": {
+            "translation": [
+                {
+                    "text": "Mar 6 - 9, Fri 11:45 PM to Mon 5:00 AM",
+                    "language": "en"
+                }
+            ]
+        }
+    }
+}

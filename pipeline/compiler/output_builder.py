@@ -6,7 +6,7 @@ import re
 from typing import Any, Dict, Optional, Sequence
 
 from .confidence import coerce_confidence
-from .models import ActivePeriod, InformedEntity, MULTI_LANG_CODES
+from .models import ActivePeriod, InformedEntity, MULTI_LANG_CODES, MercuryAlert
 
 
 class OutputBuilder:
@@ -23,9 +23,11 @@ class OutputBuilder:
         effect: str,
         header_text: str,
         description_text: Optional[str],
+        mercury_alert: Dict[str, Any],
     ) -> Dict[str, Any]:
         normalized_periods = [ActivePeriod(**p).model_dump(exclude_none=True) for p in active_periods]
         normalized_entities = [InformedEntity(**e).model_dump(exclude_none=True) for e in informed_entities]
+        normalized_mercury_alert = MercuryAlert(**mercury_alert).model_dump(exclude_none=True)
 
         variants = self._generate_text_variants_bundle(header_text=header_text, description_text=description_text)
         header_node = self._build_translated_string(header_text, multi=variants.get("header_multi", {}))
@@ -57,6 +59,7 @@ class OutputBuilder:
             "description_text": description_node,
             "tts_header_text": tts_header_node,
             "tts_description_text": tts_description_node,
+            "mercury_alert": normalized_mercury_alert,
         }
 
     def _build_translated_string(self, text: Optional[str], multi: Optional[Dict[str, str]] = None) -> Optional[Dict[str, Any]]:

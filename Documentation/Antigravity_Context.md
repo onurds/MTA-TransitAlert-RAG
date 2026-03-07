@@ -2,7 +2,7 @@
 
 Implementation memory for the current runtime.
 
-Last updated: March 6, 2026.
+Last updated: March 7, 2026.
 
 ---
 
@@ -17,7 +17,7 @@ Input:
 Output:
 
 - one GTFS-shaped JSON payload with fixed top-level keys:
-`id`, `active_period`, `informed_entity`, `cause`, `effect`, `header_text`, `description_text`, `tts_header_text`, `tts_description_text`.
+`id`, `active_period`, `informed_entity`, `cause`, `effect`, `header_text`, `description_text`, `tts_header_text`, `tts_description_text`, `mercury_alert`.
 
 Endpoint:
 
@@ -29,13 +29,21 @@ Endpoint:
 
 - DSPy is fully removed.
 - Old dual-input and directive-oriented compatibility paths are removed from runtime.
+- Legacy `description_generator.py` is removed from runtime.
 - Parse mode is LLM-first for intent.
+- Header/description text layout is handled jointly by an LLM-first resolver with `text_mode` support.
+- `text_mode="default"` is fidelity-first and near-verbatim; `text_mode="rewrite"` allows transit-style rewriting while preserving facts.
+- Operator/internal authoring-command removal is now LLM-first in the live text-layout path; regex-based command stripping was removed from the active resolver path.
 - Temporal interpretation is LLM-first via calendar-aware selection; ISO conversion/validation is deterministic.
 - GTFS graph grounding (NetworkX) is primary for route/stop entities.
 - Route aliasing is data-driven from GTFS route short/long names with stop-overlap collision guards.
+- Explicit family-prefix route shorthand such as `B: 4, 6, 41-SBS, 42` is expanded into route IDs before graph grounding.
 - Stop matching requires strong stop intent for segment-score inference to prevent route-corridor text from creating random stop IDs.
 - Dense-corridor/single-point stop ties use bounded LLM tiebreaking (top 2-3 candidates only).
 - Cause/effect enums are LLM-first with a separate enum confidence floor.
+- Mercury alert enrichment is active on every successful compile.
+- Mercury `alert_type` / priority selection is LLM-first against the full proto-derived category catalog with fallback to `Service Change`.
+- Mercury timestamps are emitted as POSIX-second strings and `display_before_active` defaults to `3600`.
 - Google Maps fallback is confidence-gated and conservative.
 
 ---
@@ -51,20 +59,22 @@ Endpoint:
 ### B) Compiler package (`pipeline/compiler/`)
 
 - `models.py`: request + internal models.
-- `intent_parser.py`: LLM-first intent extraction with minimal catastrophic fallback.
+- `intent_parser.py`: LLM-first intent extraction with parser hints only; prompt also teaches route-family list expansion.
 - `entity_selector.py`: bounded LLM chooser over allowed candidates.
 - `enum_resolver.py`: LLM enum classification with `min_confidence` and strict schema coercion (`OTHER_*` for non-empty invalid labels).
+- `mercury_resolver.py`: Mercury category inference, proto-derived priority catalog, route-only entity selector annotation, and human-readable active-period rendering.
 - `temporal_selector.py`: LLM calendar-aware period selection + deterministic datetime validation/ISO rendering.
+- `text_mode_resolver.py`: joint LLM-first header/description layout, `text_mode` handling, LLM-based operator-command cleanup, and conservative text fallback.
 - `text_renderer.py`: header cleaning, stop-id replacement, route bracket formatting.
 - `confidence.py`: confidence scoring and low-confidence preservation checks.
-- `output_builder.py`: GTFS-shaped output assembly, translation and TTS nodes.
+- `output_builder.py`: GTFS-shaped output assembly, translation/TTS nodes, and Mercury payload assembly.
 - `utils.py`: shared normalization/dedupe/entity/id helpers.
 - `orchestrator.py`: compile flow orchestration only.
 
 ### C) Graph package (`pipeline/graph/`)
 
-- `indexes.py`: graph loading, route/stop indexes, ID validation/normalization, and route-alias indexing.
-- `route_resolver.py`: route token extraction and route-node disambiguation.
+- `indexes.py`: graph loading, route/stop indexes, ID validation/normalization, route-alias indexing, and SBS-to-base fallback when the GTFS snapshot lacks a distinct SBS route.
+- `route_resolver.py`: route token extraction, family-prefix shorthand expansion, and route-node disambiguation.
 - `location_hints.py`: affected/alternative segmentation and location hint extraction.
 - `stop_matcher.py`: route-neighborhood stop scoring and filtering.
 - `geocode_fallback.py`: key loading, geocoding, nearest-stop fallback.
@@ -95,6 +105,11 @@ Enum fallback behavior:
 1. Unknown fallback is used only when enum fields are empty/unavailable after LLM resolution.
 2. Non-empty but invalid enum labels are coerced to `OTHER_CAUSE` / `OTHER_EFFECT` rather than `UNKNOWN_*`.
 
+Mercury fallback behavior:
+
+1. Mercury priority selection uses the same `0.6` confidence floor by default.
+2. Invalid, empty, or low-confidence Mercury category output falls back to priority `22` / `Service Change`.
+
 Entity fallback behavior:
 
 1. If global confidence is low or retriever indicates unresolved stop grounding, geocode fallback is attempted.
@@ -112,15 +127,22 @@ Entity fallback behavior:
 6. Alternative-stop mentions are excluded from affected-stop output when confidence is weak/conflicted.
 7. Temporal relative phrases are anchored to runtime local date/time + timezone in LLM temporal selection context.
 8. Description is nullable and may remain `null` when grounded rider guidance is insufficient.
+9. In default text mode, the live path prefers preserving wording/order and avoiding sentence splits, but the split decision itself is still LLM-first.
+10. Operator authoring text such as timeframe/date/header instructions should be stripped semantically by the LLM before final header/description validation.
+11. `mercury_alert` is always emitted on successful compile.
+12. `mercury_entity_selector` is attached only to `informed_entity` rows that include a `route_id`; stop-only rows do not carry Mercury selector metadata.
+13. If no timeframe is mentioned in the input text, Mercury `human_readable_active_period` is `Until further notice`.
 
 ---
 
 ## 6) Current Risks
 
-1. Runtime still depends on LLM availability for intent parsing and temporal interpretation.
+1. Runtime still depends on LLM availability for intent parsing, temporal interpretation, and the live text-layout path.
 2. Enum quality remains model-dependent for borderline phrasing despite improved fallback semantics.
-3. Dense-corridor disambiguation can still be difficult when operator phrasing is sparse and location hints are weak.
-4. Translation/TTS latency can increase response time with slower provider models.
+3. Text layout now relies more heavily on semantic LLM cleanup for operator-command removal, so command leakage is more model-sensitive than before.
+4. Dense-corridor disambiguation can still be difficult when operator phrasing is sparse and location hints are weak.
+5. Translation/TTS latency can increase response time with slower provider models.
+6. Mercury `alert_type` quality remains model-dependent for borderline phrasing because the category choice is intentionally LLM-first rather than rule-mapped from GTFS cause/effect.
 
 ---
 
@@ -131,7 +153,8 @@ pip install -r requirements.txt
 uvicorn main:app --reload
 python3 scripts/interactive_compile.py --ask-model
 python3 scripts/eval_api.py --limit 50
-pytest tests/test_graph_retriever.py tests/test_compiler.py tests/test_enum_resolver.py tests/test_temporal_selector.py
+pytest tests/test_graph_retriever.py tests/test_compiler.py tests/test_enum_resolver.py tests/test_temporal_selector.py tests/test_text_mode_resolver.py
+pytest tests/test_mercury_resolver.py
 ```
 
 Key runtime env defaults:
@@ -150,6 +173,7 @@ Client timeout defaults:
 
 ## 8) Notes for Future Changes
 
+- If text layout continues leaking operator commands, prefer strengthening the LLM source-clean / cleanup prompts before adding deterministic command rules back into the active path.
 - If enum stability remains an issue, adding rule-first priors as additive evidence is a safe next lever.
 - If temporal parse misses complex recurrence exceptions, increase calendar context span and allow larger period arrays before considering deterministic recurrence parser expansion.
 - Keep route alias safeguards conservative to avoid route-long-name and stop-name collisions.

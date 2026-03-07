@@ -14,6 +14,7 @@ class InformedEntity(BaseModel):
     agency_id: str
     route_id: Optional[str] = None
     stop_id: Optional[str] = None
+    mercury_entity_selector: Optional["MercuryEntitySelector"] = None
 
     @model_validator(mode="after")
     def _validate_any_selector(self) -> "InformedEntity":
@@ -39,6 +40,18 @@ class Translation(BaseModel):
 
 class TranslatedString(BaseModel):
     translation: List[Translation] = Field(default_factory=list)
+
+
+class MercuryEntitySelector(BaseModel):
+    sort_order: str
+
+
+class MercuryAlert(BaseModel):
+    created_at: str
+    updated_at: str
+    alert_type: str
+    display_before_active: str
+    human_readable_active_period: TranslatedString
 
 
 class CompileRequest(BaseModel):

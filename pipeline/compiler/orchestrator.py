@@ -13,6 +13,7 @@ from .confidence import global_confidence, should_preserve_stops_under_low_confi
 from .entity_selector import EntitySelector
 from .enum_resolver import EnumResolver
 from .intent_parser import IntentParser
+from .mercury_resolver import MercuryResolver
 from .models import CompileRequest
 from .output_builder import OutputBuilder
 from .temporal_selector import TemporalSelector
@@ -83,6 +84,11 @@ class AlertCompiler:
             llm_getter=lambda: self.llm,
             min_confidence=self.enum_confidence_threshold,
         )
+        self.mercury_resolver = MercuryResolver(
+            ensure_llm=self._ensure_llm,
+            llm_getter=lambda: self.llm,
+            min_confidence=self.enum_confidence_threshold,
+        )
         self.text_renderer = TextRenderer(retriever=self.retriever)
         self.text_mode_resolver = TextModeResolver(bump_telemetry=self._bump_telemetry)
         self.temporal_selector = TemporalSelector()
@@ -113,6 +119,7 @@ class AlertCompiler:
         temporal_confidence = 0.4
         active_periods: List[Dict[str, Any]] = []
         reference_dt = datetime.now(self.tz)
+        compiled_at_posix = int(reference_dt.timestamp())
 
         resolved_periods: List[Dict[str, Any]] = []
         if self.temporal_resolver:
@@ -135,6 +142,7 @@ class AlertCompiler:
         else:
             now_iso = reference_dt.strftime("%Y-%m-%dT%H:%M:%S")
             active_periods = [{"start": now_iso}]
+        no_timeframe_mentioned = not temporal_override and not resolved_periods
 
         explicit_route_ids = self.retriever.validate_route_ids(intent.explicit_route_ids)
         explicit_stop_ids = self.retriever.validate_stop_ids(intent.explicit_stop_ids)
@@ -304,6 +312,25 @@ class AlertCompiler:
 
         cause_out = normalize_cause(cause_effect.cause or UNKNOWN_CAUSE)
         effect_out = normalize_effect(cause_effect.effect or UNKNOWN_EFFECT)
+        mercury_selection = self.mercury_resolver.resolve(
+            instruction=instruction,
+            header_text=header.strip(),
+            description_text=description.strip() if description else None,
+            cause=cause_out,
+            effect=effect_out,
+            active_periods=active_periods,
+            informed_entities=informed_entities,
+        )
+        informed_entities = self.mercury_resolver.annotate_entities(
+            informed_entities=informed_entities,
+            priority_number=mercury_selection.priority_number,
+        )
+        mercury_alert = self.mercury_resolver.build_mercury_alert(
+            active_periods=active_periods,
+            compiled_at_posix=compiled_at_posix,
+            selection=mercury_selection,
+            no_timeframe_mentioned=no_timeframe_mentioned,
+        )
 
         return self.output_builder.build_payload(
             alert_id=alert_id,
@@ -313,6 +340,7 @@ class AlertCompiler:
             effect=effect_out,
             header_text=header.strip(),
             description_text=description.strip() if description else None,
+            mercury_alert=mercury_alert,
         )
 
     def _ensure_llm(self) -> bool:

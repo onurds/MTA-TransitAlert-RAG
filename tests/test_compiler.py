@@ -39,6 +39,10 @@ def _periods(compiled: dict) -> list:
     return compiled.get("active_period", []) if isinstance(compiled, dict) else []
 
 
+def _mercury_alert(compiled: dict) -> dict:
+    return compiled.get("mercury_alert", {}) if isinstance(compiled, dict) else {}
+
+
 def _build_compiler() -> AlertCompiler:
     return AlertCompiler(
         graph_path="data/mta_knowledge_graph.gpickle",
@@ -90,9 +94,25 @@ def test_output_key_order_and_nullable_fields_present():
         "description_text",
         "tts_header_text",
         "tts_description_text",
+        "mercury_alert",
     ]
     assert "description_text" in compiled
     assert "tts_description_text" in compiled
+    assert "mercury_alert" in compiled
+    mercury_alert = _mercury_alert(compiled)
+    assert mercury_alert.get("display_before_active") == "3600"
+    assert re.fullmatch(r"\d+", str(mercury_alert.get("created_at", "")))
+    assert re.fullmatch(r"\d+", str(mercury_alert.get("updated_at", "")))
+    assert isinstance(mercury_alert.get("human_readable_active_period"), dict)
+    for entity in _entities(compiled):
+        if not isinstance(entity, dict):
+            continue
+        selector = entity.get("mercury_entity_selector")
+        if entity.get("route_id"):
+            assert isinstance(selector, dict)
+            assert re.fullmatch(r"[^:]+:[^:]+:\d+", str(selector.get("sort_order", "")))
+        else:
+            assert selector is None
     assert _description_text(compiled) == "" or isinstance(compiled["description_text"], dict) or compiled["description_text"] is None
 
 
@@ -109,6 +129,7 @@ def test_compile_fails_without_llm():
     compiler.intent_parser.ensure_llm = _fail_ensure
     compiler.entity_selector.ensure_llm = _fail_ensure
     compiler.enum_resolver.ensure_llm = _fail_ensure
+    compiler.mercury_resolver.ensure_llm = _fail_ensure
 
     import pytest
     with pytest.raises(RuntimeError, match="LLM unavailable"):
