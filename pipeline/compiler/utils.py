@@ -21,6 +21,26 @@ def extract_first_json_object(text: str) -> Dict[str, Any]:
         return {}
 
 
+def extract_llm_text_content(response: Any) -> str:
+    content = getattr(response, "content", response)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: List[str] = []
+        for item in content:
+            if isinstance(item, str):
+                text = item
+            elif isinstance(item, dict):
+                text = str(item.get("text") or "").strip()
+            else:
+                text = str(getattr(item, "text", "") or "").strip()
+            if text:
+                parts.append(text)
+        if parts:
+            return "\n".join(parts)
+    return str(content or "")
+
+
 def has_temporal_hint(text: str) -> bool:
     lower = (text or "").lower()
     hints = [

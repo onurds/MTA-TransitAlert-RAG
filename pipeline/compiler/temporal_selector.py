@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from pipeline.temporal_resolver import ResolvedPeriod, TemporalResolver
 
 from .confidence import coerce_confidence
-from .utils import extract_first_json_object
+from .utils import extract_first_json_object, extract_llm_text_content
 
 
 class TemporalSelector:
@@ -57,9 +57,7 @@ class TemporalSelector:
 
         try:
             response = llm.invoke(prompt)
-            content = getattr(response, "content", "") if response is not None else ""
-            if not isinstance(content, str):
-                content = str(content)
+            content = extract_llm_text_content(response)
             parsed = extract_first_json_object(content)
         except Exception:
             return []

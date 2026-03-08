@@ -5,6 +5,7 @@ import re
 from typing import Any, Dict, List, Sequence, Tuple
 
 from .confidence import coerce_confidence
+from .utils import extract_llm_text_content
 
 
 class EntitySelector:
@@ -68,9 +69,7 @@ class EntitySelector:
 
         try:
             resp = llm.invoke(prompt)
-            content = getattr(resp, "content", "") if resp is not None else ""
-            if not isinstance(content, str):
-                content = str(content)
+            content = extract_llm_text_content(resp)
             parsed = self._extract_first_json_object(content)
             routes = parsed.get("selected_route_ids", [])
             stops = parsed.get("selected_stop_ids", [])
@@ -222,9 +221,7 @@ class EntitySelector:
         )
         try:
             resp = llm.invoke(prompt)
-            content = getattr(resp, "content", "") if resp is not None else ""
-            if not isinstance(content, str):
-                content = str(content)
+            content = extract_llm_text_content(resp)
             parsed = self._extract_first_json_object(content)
             sid = str(parsed.get("selected_stop_id") or "").strip().upper()
             conf = coerce_confidence(parsed.get("confidence", 0.0))

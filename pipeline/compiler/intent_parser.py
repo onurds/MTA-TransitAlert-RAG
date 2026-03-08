@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from .confidence import coerce_confidence
 from .models import IntentParseResult
+from .utils import extract_llm_text_content
 
 
 class IntentParser:
@@ -114,9 +115,7 @@ class IntentParser:
 
         try:
             response = llm.invoke(prompt)
-            content = getattr(response, "content", "") if response is not None else ""
-            if not isinstance(content, str):
-                content = str(content)
+            content = extract_llm_text_content(response)
             parsed = self._extract_first_json_object(content)
             alert_text = str(parsed.get("alert_text") or "").strip() or None
             temporal_text = str(parsed.get("temporal_text") or "").strip() or None

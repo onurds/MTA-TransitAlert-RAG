@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Sequence
 
 from .confidence import coerce_confidence
 from .models import ActivePeriod, InformedEntity, MULTI_LANG_CODES, MercuryAlert
+from .utils import extract_llm_text_content
 
 
 class OutputBuilder:
@@ -125,9 +126,7 @@ class OutputBuilder:
         )
         try:
             resp = llm.invoke(prompt)
-            content = getattr(resp, "content", "") if resp is not None else ""
-            if not isinstance(content, str):
-                content = str(content)
+            content = extract_llm_text_content(resp)
             parsed = self._extract_first_json_object(content)
             conf = coerce_confidence(parsed.get("confidence", 0.0))
             if conf < 0.6:

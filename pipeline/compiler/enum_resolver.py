@@ -13,7 +13,7 @@ from pipeline.gtfs_rules import (
 
 from .confidence import coerce_confidence
 from .models import CauseEffectResult
-from .utils import extract_first_json_object
+from .utils import extract_first_json_object, extract_llm_text_content
 
 
 class EnumResolver:
@@ -93,8 +93,7 @@ class EnumResolver:
 
         try:
             response = llm.invoke(prompt)
-            content = getattr(response, "content", "") if response is not None else ""
-            content = self._content_to_text(content)
+            content = extract_llm_text_content(response)
             json_obj = extract_first_json_object(content)
             raw_cause = str(json_obj.get("cause", "") or "").strip()
             raw_effect = str(json_obj.get("effect", "") or "").strip()
@@ -125,17 +124,3 @@ class EnumResolver:
         if token in EFFECT_ENUMS:
             return token
         return "OTHER_EFFECT"
-
-    @staticmethod
-    def _content_to_text(content: Any) -> str:
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts = []
-            for item in content:
-                if isinstance(item, dict) and item.get("text"):
-                    parts.append(str(item.get("text")))
-                else:
-                    parts.append(str(item))
-            return "\n".join(parts)
-        return str(content)

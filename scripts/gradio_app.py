@@ -42,6 +42,26 @@ _WRAPPER_CSS = """
 }
 """
 
+_COPY_JSON_JS = """
+(raw_json) => {
+    const text = (raw_json || "").toString();
+    if (!text) {
+        return [];
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text);
+        return [];
+    }
+    const el = document.createElement("textarea");
+    el.value = text;
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand("copy");
+    document.body.removeChild(el);
+    return [];
+}
+"""
+
 def _render_json_html(obj: Any) -> str:
     """Return Pygments-highlighted HTML for a JSON object."""
     raw = json.dumps(obj, indent=2, ensure_ascii=False)
@@ -117,37 +137,38 @@ def build_app(args: argparse.Namespace) -> gr.Blocks:
 
     def handle_compile(instruction: str, provider: str, model: str, text_mode: str):
         if not instruction or not instruction.strip():
-            return {}, "", "Error: Instruction cannot be empty"
+            return {}, "", "Error: Instruction cannot be empty", ""
 
         try:
             req = make_compile_request(instruction, provider, model, text_mode)
         except Exception as e:
-            return {}, "", f"Error creating request: {e}"
+            return {}, "", f"Error creating request: {e}", ""
 
         if args.mode == "api":
             try:
                 body = req.model_dump(exclude_none=True)
                 resp = requests.post(args.api_url, json=body, timeout=args.timeout)
                 if resp.status_code != 200:
-                    return {}, "", f"HTTP {resp.status_code}: {resp.text[:500]}"
+                    return {}, "", f"HTTP {resp.status_code}: {resp.text[:500]}", ""
                 result = resp.json()
             except requests.exceptions.ConnectionError:
-                return {}, "", f"Connection error: Make sure API server is running at {args.api_url}"
+                return {}, "", f"Connection error: Make sure API server is running at {args.api_url}", ""
             except Exception as e:
-                return {}, "", f"API request failed: {e}"
+                return {}, "", f"API request failed: {e}", ""
         else:
             compiler = state.get("compiler")
             if not compiler:
-                return {}, "", "Error: Local compiler not set up"
+                return {}, "", "Error: Local compiler not set up", ""
             try:
                 res_obj = compiler.compile(req)
                 result = res_obj if isinstance(res_obj, dict) else res_obj.model_dump(exclude_none=True)
             except Exception as e:
                 traceback.print_exc()
-                return {}, "", f"Local compile error: {e}"
+                return {}, "", f"Local compile error: {e}", ""
 
         highlighted_html = _render_json_html(result)
-        return result, highlighted_html, f"Successfully compiled ({req.text_mode} mode)."
+        raw_json = json.dumps(result, indent=2, ensure_ascii=False)
+        return result, highlighted_html, f"Successfully compiled ({req.text_mode} mode).", raw_json
 
 
     with gr.Blocks(title="MTA Transit Alert Compiler") as app:
@@ -183,9 +204,11 @@ def build_app(args: argparse.Namespace) -> gr.Blocks:
                 reset_btn = gr.Button("Refresh Local State")
 
         status_out = gr.Textbox(label="Status", interactive=False)
+        raw_json_state = gr.Textbox(visible=False, show_label=False)
 
         with gr.Tabs():
             with gr.Tab("Highlighted JSON"):
+                copy_btn = gr.Button("Copy JSON")
                 output_pretty = gr.HTML(
                     label="JSON Result",
                     elem_classes=["json-output-wrap"]
@@ -196,13 +219,20 @@ def build_app(args: argparse.Namespace) -> gr.Blocks:
         compile_btn.click(
             fn=handle_compile,
             inputs=[instruction_in, provider_in, model_in, default_mode_state],
-            outputs=[output_json, output_pretty, status_out],
+            outputs=[output_json, output_pretty, status_out, raw_json_state],
         )
 
         rewrite_btn.click(
             fn=handle_compile,
             inputs=[instruction_in, provider_in, model_in, rewrite_mode_state],
-            outputs=[output_json, output_pretty, status_out],
+            outputs=[output_json, output_pretty, status_out, raw_json_state],
+        )
+
+        copy_btn.click(
+            fn=None,
+            inputs=[raw_json_state],
+            outputs=[],
+            js=_COPY_JSON_JS,
         )
 
         if args.mode == "local":

@@ -4,6 +4,8 @@ import json
 import re
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple
 
+from .utils import extract_llm_text_content
+
 
 TextMode = Literal["default", "rewrite"]
 
@@ -50,9 +52,7 @@ class TextModeResolver:
                 )
                 try:
                     resp = llm.invoke(prompt)
-                    content = getattr(resp, "content", "") if resp is not None else ""
-                    if not isinstance(content, str):
-                        content = str(content)
+                    content = extract_llm_text_content(resp)
                     parsed = self._extract_first_json_object(content)
                     header = self._normalize_blocks(parsed.get("header_text") or parsed.get("header") or "")
                     description_raw = parsed.get("description_text")
@@ -187,9 +187,7 @@ class TextModeResolver:
         )
         try:
             resp = llm.invoke(prompt)
-            content = getattr(resp, "content", "") if resp is not None else ""
-            if not isinstance(content, str):
-                content = str(content)
+            content = extract_llm_text_content(resp)
             parsed = self._extract_first_json_object(content)
             cleaned_header = self._normalize_blocks(parsed.get("header_text") or header)
             cleaned_description_raw = parsed.get("description_text")
@@ -225,9 +223,7 @@ class TextModeResolver:
         )
         try:
             resp = llm.invoke(prompt)
-            content = getattr(resp, "content", "") if resp is not None else ""
-            if not isinstance(content, str):
-                content = str(content)
+            content = extract_llm_text_content(resp)
             parsed = self._extract_first_json_object(content)
             rider_text = self._normalize_blocks(parsed.get("rider_text") or "")
             return rider_text or source_text
