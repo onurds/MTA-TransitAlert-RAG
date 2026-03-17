@@ -58,6 +58,7 @@ class CompileRequest(BaseModel):
     instruction: str = ""
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+    llm_reasoning_effort: Optional[Literal["none", "minimal", "low", "medium", "high", "xhigh"]] = None
     text_mode: Literal["default", "rewrite"] = "default"
 
 

@@ -11,7 +11,8 @@ A guardrailed compiler that converts free-form operator text into GTFS-shaped al
 {
   "instruction": "Southbound Q52-SBS and Q53-SBS will not stop at stop id 553345. Tomorrow 8pm to 11pm.",
   "llm_provider": "optional",
-  "llm_model": "optional"
+  "llm_model": "optional",
+  "llm_reasoning_effort": "optional"
 }
 ```
 
@@ -68,13 +69,13 @@ pipeline/
 Supported providers:
 
 - `gemini`
-- `xai`
+- `openrouter` (default: `x-ai/grok-4.1-fast`)
 - `local` (any OpenAI-compatible local server, e.g. vLLM, mlx-lm)
 
 Key files:
 
 - Gemini: `.gemini_api` (also `.vscode/.gemini_api`)
-- xAI: `.vscode/.xai_api`
+- OpenRouter: `.vscode/.openrouter_api`
 - Google Maps fallback: `.vscode/.gmaps_api`
 
 Optional timeout env:
@@ -82,6 +83,11 @@ Optional timeout env:
 - `LLM_TIMEOUT_SECONDS` (default `180`)
 - `GMAPS_TIMEOUT_SECONDS` (default `8`)
 - `ENUM_CONFIDENCE_THRESHOLD` (default `0.6`)
+
+OpenRouter reasoning:
+
+- `OPENROUTER_REASONING_EFFORT` (default `none`)
+- Request override: `llm_reasoning_effort` with values `none|minimal|low|medium|high|xhigh`
 
 ## Quick Start
 

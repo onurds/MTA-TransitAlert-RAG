@@ -13,6 +13,10 @@ TextMode = Literal["default", "rewrite"]
 class TextModeResolver:
     def __init__(self, bump_telemetry: Optional[Callable[[str, int], None]] = None):
         self._bump_telemetry = bump_telemetry
+        self.last_resolution_report: Dict[str, Any] = {
+            "source": "deterministic",
+            "details": "No text resolution run yet.",
+        }
 
     def resolve(
         self,
@@ -24,8 +28,16 @@ class TextModeResolver:
         text_mode: TextMode,
         header_hint: Optional[str] = None,
     ) -> Tuple[str, Optional[str]]:
+        self.last_resolution_report = {
+            "source": "deterministic",
+            "details": "Deterministic fallback was used.",
+        }
         source_text = self._normalize_blocks(instruction)
         if not source_text:
+            self.last_resolution_report = {
+                "source": "deterministic",
+                "details": "Input was empty after normalization.",
+            }
             return "", None
         effective_header_hint = header_hint if text_mode == "rewrite" else None
         rider_source = source_text
@@ -74,6 +86,10 @@ class TextModeResolver:
                         text_mode=text_mode,
                     )
                     if ok:
+                        self.last_resolution_report = {
+                            "source": "llm",
+                            "details": f"LLM layout succeeded on the {attempt} attempt.",
+                        }
                         return header, description
                     self._bump("text_layout_validation_fail")
                     if reason:
@@ -82,6 +98,10 @@ class TextModeResolver:
                     continue
 
         self._bump("text_layout_fallback_used")
+        self.last_resolution_report = {
+            "source": "deterministic",
+            "details": "LLM layout failed validation or invocation, so deterministic fallback was used.",
+        }
         return self._deterministic_fallback(
             source_text=rider_source,
             header_hint=effective_header_hint,

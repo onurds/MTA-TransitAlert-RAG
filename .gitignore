@@ -7,3 +7,8 @@
 *.pyc
 .DS_Store
 /.cache
+__pycache__/
+/.pytest_cache/
+/.mypy_cache/
+/.ruff_cache/
+/.gradio_state.json

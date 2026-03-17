@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--provider",
-        choices=["gemini", "xai", "local"],
+        choices=["gemini", "openrouter", "local"],
         default=None,
         help="Optional provider override sent to /compile.",
     )
@@ -51,6 +51,12 @@ def parse_args() -> argparse.Namespace:
         "--model",
         default=None,
         help="Optional model override sent to /compile.",
+    )
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=["none", "minimal", "low", "medium", "high", "xhigh"],
+        default=None,
+        help="Optional OpenRouter reasoning effort override sent to /compile.",
     )
     parser.add_argument(
         "--ask-model",
@@ -97,10 +103,10 @@ def prompt_model_config(default_provider: str | None, default_model: str | None)
     print("\nModel selection (press Enter to keep default).")
     print(f"Current provider: {default_provider or 'server default'}")
     print(f"Current model: {default_model or 'server default'}")
-    provider = input("Provider [gemini/xai/local]: ").strip().lower()
+    provider = input("Provider [gemini/openrouter/local]: ").strip().lower()
     model = input("Model name: ").strip()
 
-    provider_out = provider if provider in {"gemini", "xai", "local"} else default_provider
+    provider_out = provider if provider in {"gemini", "openrouter", "local"} else default_provider
     model_out = model if model else default_model
     return provider_out, model_out
 
@@ -118,6 +124,7 @@ def main() -> int:
     session = requests.Session()
     provider = args.provider
     model = args.model
+    reasoning_effort = args.reasoning_effort
 
     if args.ask_model:
         provider, model = prompt_model_config(provider, model)
@@ -127,6 +134,7 @@ def main() -> int:
     print(f"Existing records: {len(records)}")
     print(f"Provider override: {provider or 'server default'}")
     print(f"Model override: {model or 'server default'}")
+    print(f"Reasoning effort override: {reasoning_effort or 'server default'}")
 
     while True:
         instruction = prompt_instruction()
@@ -141,6 +149,8 @@ def main() -> int:
             body["llm_provider"] = provider
         if model:
             body["llm_model"] = model
+        if reasoning_effort:
+            body["llm_reasoning_effort"] = reasoning_effort
 
         try:
             resp = session.post(args.url, json=body, timeout=args.timeout)
@@ -163,6 +173,7 @@ def main() -> int:
             "instruction": instruction,
             "llm_provider": provider,
             "llm_model": model,
+            "llm_reasoning_effort": reasoning_effort,
             "response": compiled,
         }
 

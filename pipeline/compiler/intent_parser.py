@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Callable, Dict, List, Optional
+import traceback
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from .confidence import coerce_confidence
 from .models import IntentParseResult
@@ -114,9 +115,13 @@ class IntentParser:
             )
 
         try:
+            print(f"[DEBUG] Calling LLM with prompt (compact={compact})...")
             response = llm.invoke(prompt)
+            print(f"[DEBUG] LLM response received: {type(response)}")
             content = extract_llm_text_content(response)
+            print(f"[DEBUG] Extracted content: {content[:100]}...")
             parsed = self._extract_first_json_object(content)
+            print(f"[DEBUG] Parsed JSON: {parsed}")
             alert_text = str(parsed.get("alert_text") or "").strip() or None
             temporal_text = str(parsed.get("temporal_text") or "").strip() or None
             if temporal_text and temporal_text.lower() in {"null", "none"}:
@@ -151,7 +156,9 @@ class IntentParser:
                 style_intent=style_intent,
                 parse_confidence=parse_conf,
             )
-        except Exception:
+        except Exception as e:
+            print(f"[DEBUG] Error in _llm_extract_intent: {e}")
+            traceback.print_exc()
             return None
 
     def _extract_explicit_stop_ids(self, text: str) -> List[str]:
@@ -180,7 +187,7 @@ class IntentParser:
             return {}
 
     @staticmethod
-    def _merge_unique_tokens(*groups: List[str]) -> List[str]:
+    def _merge_unique_tokens(*groups: Sequence[str]) -> List[str]:
         out: List[str] = []
         seen = set()
         for group in groups:

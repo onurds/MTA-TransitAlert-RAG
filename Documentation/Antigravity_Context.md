@@ -2,7 +2,7 @@
 
 Implementation memory for the current runtime.
 
-Last updated: March 7, 2026.
+Last updated: March 17, 2026.
 
 ---
 
@@ -163,6 +163,9 @@ Key runtime env defaults:
 - `ENUM_CONFIDENCE_THRESHOLD=0.6`
 - `LLM_TIMEOUT_SECONDS=180`
 - `GMAPS_TIMEOUT_SECONDS=8`
+- `LLM_PROVIDER=openrouter`
+- `OPENROUTER_MODEL_NAME=x-ai/grok-4.1-fast`
+- `OPENROUTER_REASONING_EFFORT=none`
 
 Client timeout defaults:
 
@@ -177,3 +180,38 @@ Client timeout defaults:
 - If enum stability remains an issue, adding rule-first priors as additive evidence is a safe next lever.
 - If temporal parse misses complex recurrence exceptions, increase calendar context span and allow larger period arrays before considering deterministic recurrence parser expansion.
 - Keep route alias safeguards conservative to avoid route-long-name and stop-name collisions.
+
+---
+
+## 9) Diff Since Last Commit
+
+Runtime / provider changes:
+
+- OpenAI-compatible provider naming was migrated from `xai` to `openrouter` across runtime code and docs.
+- Default runtime provider is now OpenRouter, with default model `x-ai/grok-4.1-fast`.
+- OpenRouter reasoning control is now explicit via `OPENROUTER_REASONING_EFFORT`, defaulting to `none`.
+- `/compile` request schema now accepts optional `llm_reasoning_effort` with values `none|minimal|low|medium|high|xhigh`.
+- OpenRouter requests are sent with OpenRouter-specific headers and a `reasoning.effort` body override; local OpenAI-compatible calls were also updated to current `ChatOpenAI` parameter conventions.
+
+Compiler / diagnostics changes:
+
+- `orchestrator.py` now emits a per-run `last_compile_report` with stage-by-stage provenance (`llm` vs `deterministic`) for intent parsing, temporal resolution, entity retrieval/selection, enum resolution, geocode fallback, text mode resolution, Mercury resolution, and payload building.
+- Geocode fallback reporting was tightened: fallback is only marked as "used" if it actually changes final entities after explicit-stop filtering and deduplication.
+- `text_mode_resolver.py` now records whether final header/description output came from the LLM layout path or deterministic fallback.
+- `output_builder.py` now records whether translation/TTS variants came from LLM generation or deterministic fallback behavior.
+- `intent_parser.py` and `orchestrator.py` now include deeper debug logging for LLM calls, parsed payloads, phase boundaries, and tracebacks.
+
+UI / tooling changes:
+
+- `scripts/gradio_app.py` now supports provider/model/reasoning overrides together in the UI and persists those selections in `.gradio_state.json`.
+- Gradio now reports total compile time in the success message.
+- Gradio now includes a `Stage Report` tab showing compiler-stage provenance and details for local-mode runs.
+- Gradio now includes a `Stop` button that cancels compile/rewrite events and terminates the running Gradio server process.
+- `scripts/interactive_compile.py` now accepts and forwards `--reasoning-effort`.
+
+Typing / housekeeping changes:
+
+- `CompileRequest` now includes `llm_reasoning_effort`.
+- `temporal_resolver.py`, `output_builder.py`, and helper signatures received small typing cleanups for static checking.
+- `.gitignore` now ignores Python cache directories and `.gradio_state.json`.
+- README and proposal docs were updated to reflect the OpenRouter-based runtime direction.

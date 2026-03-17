@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, cast
 from zoneinfo import ZoneInfo
 
 
@@ -40,7 +40,7 @@ class TemporalResolver:
         self.calendar_path = Path(calendar_path)
         self.tz = ZoneInfo(timezone)
         self.rows = self._load_calendar_rows(self.calendar_path)
-        self.available_dates = [row["date_obj"] for row in self.rows]
+        self.available_dates: List[date] = [cast(date, row["date_obj"]) for row in self.rows]
         self.day_index = self._build_day_index(self.rows)
 
     @staticmethod
@@ -58,7 +58,7 @@ class TemporalResolver:
                         "day_name": row["day_name"].strip(),
                     }
                 )
-        rows.sort(key=lambda r: r["date_obj"])
+        rows.sort(key=lambda r: cast(date, r["date_obj"]))
         return rows
 
     @staticmethod

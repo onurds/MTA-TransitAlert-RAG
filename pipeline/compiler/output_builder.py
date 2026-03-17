@@ -14,6 +14,10 @@ class OutputBuilder:
     def __init__(self, ensure_llm, llm_getter):
         self.ensure_llm = ensure_llm
         self.llm_getter = llm_getter
+        self.last_variants_report: Dict[str, Any] = {
+            "source": "deterministic",
+            "details": "No variant generation run yet.",
+        }
 
     def build_payload(
         self,
@@ -97,17 +101,31 @@ class OutputBuilder:
     def _generate_text_variants_bundle(self, header_text: str, description_text: Optional[str]) -> Dict[str, Any]:
         header = str(header_text or "").strip()
         description = str(description_text or "").strip()
-        out = {
+        out: Dict[str, Any] = {
             "header_multi": {c: "" for c in MULTI_LANG_CODES},
             "description_multi": {c: "" for c in MULTI_LANG_CODES},
             "tts_header": "",
             "tts_description": "",
         }
-        if not header or not self.ensure_llm():
+        if not header:
+            self.last_variants_report = {
+                "source": "deterministic",
+                "details": "Variant generation was skipped because header text was empty.",
+            }
+            return out
+        if not self.ensure_llm():
+            self.last_variants_report = {
+                "source": "deterministic",
+                "details": "LLM was unavailable, so deterministic TTS fallback and plain-text copies were used.",
+            }
             return out
 
         llm = self.llm_getter()
         if llm is None:
+            self.last_variants_report = {
+                "source": "deterministic",
+                "details": "LLM handle was unavailable, so deterministic TTS fallback and plain-text copies were used.",
+            }
             return out
 
         prompt = (
@@ -130,6 +148,10 @@ class OutputBuilder:
             parsed = self._extract_first_json_object(content)
             conf = coerce_confidence(parsed.get("confidence", 0.0))
             if conf < 0.6:
+                self.last_variants_report = {
+                    "source": "deterministic",
+                    "details": "LLM variant generation returned low confidence, so deterministic fallbacks were used.",
+                }
                 return out
 
             out["header_multi"]["zh"] = str(parsed.get("header_zh", "") or "").strip()
@@ -138,8 +160,16 @@ class OutputBuilder:
             out["description_multi"]["es"] = str(parsed.get("description_es", "") or "").strip()
             out["tts_header"] = str(parsed.get("tts_header", "") or "").strip()
             out["tts_description"] = str(parsed.get("tts_description", "") or "").strip()
+            self.last_variants_report = {
+                "source": "llm",
+                "details": "LLM generated multilingual and TTS variants.",
+            }
             return out
         except Exception:
+            self.last_variants_report = {
+                "source": "deterministic",
+                "details": "LLM variant generation failed, so deterministic fallbacks were used.",
+            }
             return out
 
     @staticmethod

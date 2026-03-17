@@ -11,8 +11,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 import signal
 import sys
+import threading
 import traceback
 from typing import Any, Dict
 
@@ -69,13 +71,21 @@ def _render_json_html(obj: Any) -> str:
     return highlight(raw, JsonLexer(), formatter)
 
 
-def make_compile_request(instruction: str, provider: str, model: str, text_mode: str) -> CompileRequest:
+def make_compile_request(
+    instruction: str,
+    provider: str,
+    model: str,
+    text_mode: str,
+    reasoning_effort: str = "",
+) -> CompileRequest:
     p_val = provider.strip() if provider.strip() else None
     m_val = model.strip() if model.strip() else None
+    r_val = reasoning_effort.strip().lower() if reasoning_effort.strip() else None
     return CompileRequest(
         instruction=instruction.strip(),
         llm_provider=p_val,
         llm_model=m_val,
+        llm_reasoning_effort=r_val,
         text_mode=text_mode,
     )
 
@@ -102,19 +112,50 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+_STATE_FILE = ".gradio_state.json"
+
+
+def load_persistent_state() -> Dict[str, str]:
+    if os.path.exists(_STATE_FILE):
+        try:
+            with open(_STATE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def save_persistent_state(provider: str, model: str, reasoning_effort: str):
+    try:
+        with open(_STATE_FILE, "w") as f:
+            json.dump(
+                {"provider": provider, "model": model, "reasoning_effort": reasoning_effort},
+                f,
+            )
+    except Exception:
+        pass
+
+
 def build_app(args: argparse.Namespace) -> gr.Blocks:
     # Read actual runtime config so the UI reflects the real defaults
     runtime_cfg = load_llm_config()
     default_provider = runtime_cfg.provider
     if default_provider == "gemini":
         default_model = runtime_cfg.gemini_model_name
-    elif default_provider == "xai":
-        default_model = runtime_cfg.xai_model_name
+    elif default_provider == "openrouter":
+        default_model = runtime_cfg.openrouter_model_name
     else:
         default_model = runtime_cfg.local_model_name
 
+    # Load persistent state
+    p_state = load_persistent_state()
+    initial_provider = p_state.get("provider", "")
+    initial_model = p_state.get("model", "")
+    initial_reasoning_effort = p_state.get("reasoning_effort", runtime_cfg.openrouter_reasoning_effort)
+
     # State holds the local compiler reference
     state = {"compiler": None}
+    app_holder: Dict[str, gr.Blocks] = {}
 
     def init_compiler():
         if args.mode == "local":
@@ -135,40 +176,79 @@ def build_app(args: argparse.Namespace) -> gr.Blocks:
         msg = init_compiler()
         return msg
 
-    def handle_compile(instruction: str, provider: str, model: str, text_mode: str):
+    def handle_stop():
+        def _shutdown():
+            time.sleep(0.2)
+            app = app_holder.get("app")
+            if app is not None:
+                try:
+                    app.close(verbose=False)
+                except Exception:
+                    pass
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        threading.Thread(target=_shutdown, daemon=True).start()
+        return "Stopping current job and terminating the Gradio server..."
+
+    def handle_compile(
+        instruction: str,
+        provider: str,
+        model: str,
+        reasoning_effort: str,
+        text_mode: str,
+    ):
         if not instruction or not instruction.strip():
-            return {}, "", "Error: Instruction cannot be empty", ""
+            return {}, "", "Error: Instruction cannot be empty", "", {}
+
+        # Save state for persistence across restarts
+        save_persistent_state(provider, model, reasoning_effort)
 
         try:
-            req = make_compile_request(instruction, provider, model, text_mode)
+            req = make_compile_request(instruction, provider, model, text_mode, reasoning_effort)
         except Exception as e:
-            return {}, "", f"Error creating request: {e}", ""
+            return {}, "", f"Error creating request: {e}", "", {}
+
+        started_at = time.perf_counter()
+        stage_report: Dict[str, Any] = {}
 
         if args.mode == "api":
             try:
                 body = req.model_dump(exclude_none=True)
                 resp = requests.post(args.api_url, json=body, timeout=args.timeout)
                 if resp.status_code != 200:
-                    return {}, "", f"HTTP {resp.status_code}: {resp.text[:500]}", ""
+                    return {}, "", f"HTTP {resp.status_code}: {resp.text[:500]}", "", {}
                 result = resp.json()
+                stage_report = {
+                    "mode": "api",
+                    "stages": [],
+                    "details": "Stage report is only available in local mode unless the API server is extended to return compiler diagnostics.",
+                }
             except requests.exceptions.ConnectionError:
-                return {}, "", f"Connection error: Make sure API server is running at {args.api_url}", ""
+                return {}, "", f"Connection error: Make sure API server is running at {args.api_url}", "", {}
             except Exception as e:
-                return {}, "", f"API request failed: {e}", ""
+                return {}, "", f"API request failed: {e}", "", {}
         else:
             compiler = state.get("compiler")
             if not compiler:
-                return {}, "", "Error: Local compiler not set up", ""
+                return {}, "", "Error: Local compiler not set up", "", {}
             try:
                 res_obj = compiler.compile(req)
                 result = res_obj if isinstance(res_obj, dict) else res_obj.model_dump(exclude_none=True)
+                stage_report = dict(getattr(compiler, "last_compile_report", {}) or {})
             except Exception as e:
                 traceback.print_exc()
-                return {}, "", f"Local compile error: {e}", ""
+                return {}, "", f"Local compile error: {e}", "", {}
 
         highlighted_html = _render_json_html(result)
         raw_json = json.dumps(result, indent=2, ensure_ascii=False)
-        return result, highlighted_html, f"Successfully compiled ({req.text_mode} mode).", raw_json
+        elapsed_seconds = time.perf_counter() - started_at
+        return (
+            result,
+            highlighted_html,
+            f"Successfully compiled ({req.text_mode} mode) in {elapsed_seconds:.2f}s.",
+            raw_json,
+            stage_report,
+        )
 
 
     with gr.Blocks(title="MTA Transit Alert Compiler") as app:
@@ -187,19 +267,27 @@ def build_app(args: argparse.Namespace) -> gr.Blocks:
         with gr.Row():
             provider_in = gr.Dropdown(
                 label="Override Provider",
-                choices=["", "gemini", "xai", "local"],
-                value="",
+                choices=["", "gemini", "openrouter", "local"],
+                value=initial_provider,
                 info=f"Default: {default_provider}"
             )
             model_in = gr.Textbox(
                 label="Override Model",
+                value=initial_model,
                 placeholder=f"(Optional) e.g. {default_model}",
                 info=f"Default: {default_provider}/{default_model}"
+            )
+            reasoning_in = gr.Dropdown(
+                label="OpenRouter Reasoning",
+                choices=["none", "minimal", "low", "medium", "high", "xhigh"],
+                value=initial_reasoning_effort,
+                info=f"Default: {runtime_cfg.openrouter_reasoning_effort}. Only used for OpenRouter."
             )
 
         with gr.Row():
             compile_btn = gr.Button("Compile", variant="primary")
             rewrite_btn = gr.Button("Rewrite")
+            stop_btn = gr.Button("Stop", variant="stop")
             if args.mode == "local":
                 reset_btn = gr.Button("Refresh Local State")
 
@@ -215,17 +303,27 @@ def build_app(args: argparse.Namespace) -> gr.Blocks:
                 )
             with gr.Tab("Raw Data"):
                 output_json = gr.JSON(label="Result Object")
+            with gr.Tab("Stage Report"):
+                stage_report_out = gr.JSON(label="Compiler Stage Report")
 
-        compile_btn.click(
+        compile_event = compile_btn.click(
             fn=handle_compile,
-            inputs=[instruction_in, provider_in, model_in, default_mode_state],
-            outputs=[output_json, output_pretty, status_out, raw_json_state],
+            inputs=[instruction_in, provider_in, model_in, reasoning_in, default_mode_state],
+            outputs=[output_json, output_pretty, status_out, raw_json_state, stage_report_out],
         )
 
-        rewrite_btn.click(
+        rewrite_event = rewrite_btn.click(
             fn=handle_compile,
-            inputs=[instruction_in, provider_in, model_in, rewrite_mode_state],
-            outputs=[output_json, output_pretty, status_out, raw_json_state],
+            inputs=[instruction_in, provider_in, model_in, reasoning_in, rewrite_mode_state],
+            outputs=[output_json, output_pretty, status_out, raw_json_state, stage_report_out],
+        )
+
+        stop_btn.click(
+            fn=handle_stop,
+            outputs=[status_out],
+            cancels=[compile_event, rewrite_event],
+            queue=False,
+            show_progress="hidden",
         )
 
         copy_btn.click(
@@ -247,6 +345,7 @@ def build_app(args: argparse.Namespace) -> gr.Blocks:
             inputs=[instruction_in]
         )
 
+    app_holder["app"] = app
     return app
 
 
