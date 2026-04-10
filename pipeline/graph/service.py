@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
@@ -67,6 +68,13 @@ class GraphRetriever(
                 "location_hints": [],
                 "fallback_needed": True,
                 "route_ids": [],
+                "has_stop_intent": False,
+                "high_level_context": self.retrieve_high_level_context(
+                    alert_text="",
+                    route_ids=[],
+                    location_hints=[],
+                    stop_candidates=[],
+                ),
             }
 
         affected_segments, alternative_segments = self._split_affected_and_alternative_segments(text)
@@ -100,6 +108,13 @@ class GraphRetriever(
                 "location_hints": location_hints,
                 "fallback_needed": True,
                 "route_ids": [],
+                "has_stop_intent": has_strong_stop_intent or bool(location_hints),
+                "high_level_context": self.retrieve_high_level_context(
+                    alert_text=text,
+                    route_ids=[],
+                    location_hints=location_hints,
+                    stop_candidates=[],
+                ),
             }
 
         route_choices: List[RouteChoice] = []
@@ -130,6 +145,13 @@ class GraphRetriever(
                 "location_hints": location_hints,
                 "fallback_needed": True,
                 "route_ids": route_ids,
+                "has_stop_intent": has_strong_stop_intent or bool(location_hints),
+                "high_level_context": self.retrieve_high_level_context(
+                    alert_text=text,
+                    route_ids=route_ids,
+                    location_hints=location_hints,
+                    stop_candidates=[],
+                ),
             }
 
         informed_entities: List[Dict[str, Any]] = []
@@ -189,6 +211,7 @@ class GraphRetriever(
             stop_confidence = 0.2
 
         fallback_needed = has_stop_indication and not stop_scores
+        route_ids_out = [c.route_id for c in route_choices]
 
         return {
             "status": "success",
@@ -198,10 +221,90 @@ class GraphRetriever(
             "stop_confidence": round(stop_confidence, 3),
             "location_hints": location_hints,
             "fallback_needed": fallback_needed,
-            "route_ids": [c.route_id for c in route_choices],
+            "route_ids": route_ids_out,
             "route_node_ids": [c.route_node_id for c in route_choices],
             "matched_stop_count": len(stop_scores),
+            "has_stop_intent": has_stop_indication,
+            "high_level_context": self.retrieve_high_level_context(
+                alert_text=text,
+                route_ids=route_ids_out,
+                location_hints=location_hints,
+                stop_candidates=stop_candidates,
+            ),
         }
+
+    def retrieve_high_level_context(
+        self,
+        alert_text: str,
+        route_ids: Sequence[str],
+        location_hints: Sequence[str],
+        stop_candidates: Sequence[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        normalized_routes = self.validate_route_ids(route_ids)
+        corridor_stop_names: List[str] = []
+        seen_stop_names = set()
+        for row in stop_candidates[:5]:
+            stop_name = str(row.get("stop_name", "") or "").strip()
+            if not stop_name:
+                continue
+            key = stop_name.lower()
+            if key in seen_stop_names:
+                continue
+            seen_stop_names.add(key)
+            corridor_stop_names.append(stop_name)
+
+        co_occurring_routes = [
+            rid
+            for rid in self._extract_route_ids(alert_text or "")
+            if rid not in normalized_routes
+        ][:5]
+
+        alert_patterns: List[str] = []
+        lower = (alert_text or "").lower()
+        for marker, label in (
+            ("detour", "detour"),
+            ("reroute", "reroute"),
+            ("bypass", "stops_skipped"),
+            ("delay", "delay"),
+            ("suspend", "suspension"),
+            ("relocat", "relocation"),
+        ):
+            if marker in lower and label not in alert_patterns:
+                alert_patterns.append(label)
+
+        return {
+            "route_display_names": [
+                self.route_display_name_for_id(route_id) or route_id
+                for route_id in normalized_routes
+            ],
+            "route_families": self._route_families(normalized_routes),
+            "corridor_stop_names": corridor_stop_names,
+            "location_hints": [str(h).strip() for h in location_hints if str(h).strip()][:5],
+            "co_occurring_routes": co_occurring_routes,
+            "agency_context": sorted(
+                {
+                    self.agency_for_route_id(route_id)
+                    for route_id in normalized_routes
+                }
+            ),
+            "alert_patterns": alert_patterns,
+        }
+
+    @staticmethod
+    def _route_families(route_ids: Sequence[str]) -> List[str]:
+        families: List[str] = []
+        seen = set()
+        for route_id in route_ids:
+            token = str(route_id or "").strip().upper()
+            if not token:
+                continue
+            match = re.match(r"[A-Z]+", token)
+            family = match.group(0) if match else "NUMERIC"
+            if family in seen:
+                continue
+            seen.add(family)
+            families.append(family)
+        return families
 
     def geocode_fallback_entities(
         self,

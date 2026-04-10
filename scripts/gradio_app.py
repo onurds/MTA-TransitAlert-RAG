@@ -90,6 +90,13 @@ def make_compile_request(
     )
 
 
+def infer_debug_report_url(api_url: str) -> str:
+    value = str(api_url or "").strip()
+    if value.endswith("/compile"):
+        return f"{value[:-8]}/debug/last_compile_report"
+    return f"{value.rstrip('/')}/debug/last_compile_report"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Gradio UI for /compile pipeline")
     parser.add_argument("--mode", choices=["local", "api"], default="local", help="Run compiler in-process or call HTTP API")
@@ -218,11 +225,25 @@ def build_app(args: argparse.Namespace) -> gr.Blocks:
                 if resp.status_code != 200:
                     return {}, "", f"HTTP {resp.status_code}: {resp.text[:500]}", "", {}
                 result = resp.json()
-                stage_report = {
-                    "mode": "api",
-                    "stages": [],
-                    "details": "Stage report is only available in local mode unless the API server is extended to return compiler diagnostics.",
-                }
+                debug_url = infer_debug_report_url(args.api_url)
+                try:
+                    debug_resp = requests.get(debug_url, timeout=args.timeout)
+                    if debug_resp.status_code == 200:
+                        debug_payload = debug_resp.json()
+                        if isinstance(debug_payload, dict):
+                            stage_report = debug_payload
+                    if not stage_report:
+                        stage_report = {
+                            "mode": "api",
+                            "stages": [],
+                            "details": f"Compile succeeded, but no stage report was returned from {debug_url}.",
+                        }
+                except Exception as debug_exc:
+                    stage_report = {
+                        "mode": "api",
+                        "stages": [],
+                        "details": f"Compile succeeded, but stage report fetch failed from {debug_url}: {debug_exc}",
+                    }
             except requests.exceptions.ConnectionError:
                 return {}, "", f"Connection error: Make sure API server is running at {args.api_url}", "", {}
             except Exception as e:

@@ -5,13 +5,17 @@ import re
 from typing import Any, Dict, List, Sequence, Tuple
 
 from .confidence import coerce_confidence
-from .utils import extract_llm_text_content
+from .utils import extract_llm_text_content, invoke_json_with_repair
 
 
 class EntitySelector:
     def __init__(self, ensure_llm, llm_getter):
         self.ensure_llm = ensure_llm
         self.llm_getter = llm_getter
+        self.last_selection_report: Dict[str, Any] = {
+            "source": "deterministic",
+            "repair_used": False,
+        }
 
     def llm_select_entities(
         self,
@@ -21,6 +25,7 @@ class EntitySelector:
         locked_route_ids: Sequence[str],
         locked_stop_ids: Sequence[str],
         location_hints: Sequence[str],
+        high_level_context: Dict[str, Any] | None = None,
     ) -> Tuple[List[str], List[str], float]:
         if not self.ensure_llm():
             raise RuntimeError("LLM is required for entity selection but is unavailable.")
@@ -65,12 +70,21 @@ class EntitySelector:
             f"Allowed stop candidates: {json.dumps(pretty_candidates, ensure_ascii=False)}\n"
             f"Locked route IDs: {list(locked_route_ids)}\n"
             f"Locked stop IDs: {list(locked_stop_ids)}\n"
+            f"HIGH_LEVEL_CONTEXT: {json.dumps(high_level_context or {}, ensure_ascii=False)}\n"
         )
 
         try:
-            resp = llm.invoke(prompt)
-            content = extract_llm_text_content(resp)
-            parsed = self._extract_first_json_object(content)
+            parsed, repair_used = invoke_json_with_repair(
+                llm=llm,
+                prompt=prompt,
+                required_keys=("selected_route_ids", "selected_stop_ids", "confidence"),
+                repair_prompt_builder=lambda bad: (
+                    "/no_think\n"
+                    "Repair this entity selector output. Return strict JSON only with "
+                    "selected_route_ids, selected_stop_ids, confidence.\n"
+                    f"RAW_OUTPUT:\n{bad}"
+                ),
+            )
             routes = parsed.get("selected_route_ids", [])
             stops = parsed.get("selected_stop_ids", [])
             confidence = coerce_confidence(parsed.get("confidence", 0.0))
@@ -93,8 +107,22 @@ class EntitySelector:
                 if token and token in stop_allow and token not in selected_stops:
                     selected_stops.append(token)
 
+            self.last_selection_report = {
+                "source": "llm",
+                "repair_used": repair_used,
+                "selected_routes": list(selected_routes),
+                "selected_stops": list(selected_stops),
+                "confidence": confidence,
+            }
             return selected_routes, selected_stops, confidence
         except Exception:
+            self.last_selection_report = {
+                "source": "deterministic",
+                "repair_used": False,
+                "selected_routes": [],
+                "selected_stops": [],
+                "confidence": 0.0,
+            }
             return [], [], 0.0
 
     def choose_stops_for_single_location(

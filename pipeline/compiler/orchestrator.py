@@ -10,12 +10,19 @@ from pipeline.llm_config import build_langchain_chat_model, load_llm_config, wit
 from pipeline.temporal_resolver import TemporalResolver
 
 from .confidence import global_confidence, should_preserve_stops_under_low_confidence
+from .evidence import (
+    command_stripped_instruction,
+    decompose_instruction,
+    evidence_text,
+    summarize_evidence_units,
+)
 from .entity_selector import EntitySelector
 from .enum_resolver import EnumResolver
 from .intent_parser import IntentParser
 from .mercury_resolver import MercuryResolver
 from .models import CompileRequest
 from .output_builder import OutputBuilder
+from .retrieval_evaluator import RetrievalEvaluator
 from .temporal_selector import TemporalSelector
 from .text_renderer import TextRenderer
 from .text_mode_resolver import TextModeResolver
@@ -50,6 +57,13 @@ class AlertCompiler:
         self.tz = ZoneInfo(timezone)
         self.confidence_threshold = confidence_threshold
         self.enum_confidence_threshold = enum_confidence_threshold
+        self.baseline_config: Dict[str, Any] = {
+            "graph_path": graph_path,
+            "calendar_path": calendar_path,
+            "timezone": timezone,
+            "confidence_threshold": confidence_threshold,
+            "enum_confidence_threshold": enum_confidence_threshold,
+        }
 
         try:
             self.temporal_resolver = TemporalResolver(calendar_path=calendar_path, timezone=timezone)
@@ -85,6 +99,7 @@ class AlertCompiler:
             llm_getter=lambda: self.llm,
             min_confidence=self.enum_confidence_threshold,
         )
+        self.retrieval_evaluator = RetrievalEvaluator()
         self.mercury_resolver = MercuryResolver(
             ensure_llm=self._ensure_llm,
             llm_getter=lambda: self.llm,
@@ -100,32 +115,69 @@ class AlertCompiler:
 
     def compile(self, request: CompileRequest) -> Dict[str, Any]:
         print(f"[DEBUG] Starting compilation for instruction: {request.instruction[:50]}...")
-        compile_report: Dict[str, Any] = {
-            "provider": request.llm_provider or self._llm_config.provider,
-            "model": request.llm_model or (
-                self._llm_config.openrouter_model_name if (request.llm_provider or self._llm_config.provider) == "openrouter"
-                else self._llm_config.gemini_model_name if (request.llm_provider or self._llm_config.provider) == "gemini"
-                else self._llm_config.local_model_name
-            ),
-            "reasoning_effort": request.llm_reasoning_effort or self._llm_config.openrouter_reasoning_effort,
-            "stages": [],
-        }
         self._set_request_llm_config(
             request.llm_provider,
             request.llm_model,
             request.llm_reasoning_effort,
         )
+        provider = request.llm_provider or self._llm_config_active.provider
+        model = request.llm_model or (
+            self._llm_config_active.openrouter_model_name
+            if provider == "openrouter"
+            else self._llm_config_active.gemini_model_name
+            if provider == "gemini"
+            else self._llm_config_active.local_model_name
+        )
+        compile_report: Dict[str, Any] = {
+            "provider": provider,
+            "model": model,
+            "reasoning_effort": request.llm_reasoning_effort or self._llm_config_active.openrouter_reasoning_effort,
+            "baseline_config": dict(self.baseline_config),
+            "request": {
+                "text_mode": request.text_mode,
+            },
+            "stages": [],
+        }
 
         instruction = (request.instruction or "").strip()
         if not instruction:
             raise ValueError("instruction is required and cannot be empty.")
+        compile_report["request"]["instruction_preview"] = instruction[:200]
+
+        evidence_units = decompose_instruction(instruction)
+        evidence_summary = summarize_evidence_units(evidence_units)
+        affected_source_text = evidence_text(evidence_units, ("affected_service", "location_evidence")) or instruction
+        temporal_source_text = evidence_text(evidence_units, ("temporal_directive", "affected_service")) or instruction
+        rider_source_text = command_stripped_instruction(evidence_units) or instruction
+        compile_report["stages"].append({
+            "stage": "evidence_decomposition",
+            "source": "deterministic",
+            "inputs": {"instruction_length": len(instruction)},
+            "outputs": {"evidence_units": evidence_summary},
+            "scores": {"unit_count": len(evidence_units)},
+            "branch_decision": "typed_evidence_units_ready",
+            "details": "Instruction was segmented into typed evidence units before retrieval and text generation.",
+        })
 
         print("[DEBUG] Phase 1: Intent Parsing...")
         intent = self.intent_parser.parse(instruction)
         print(f"[DEBUG] Intent parsed: {intent.parse_confidence}")
         compile_report["stages"].append({
             "stage": "intent_parsing",
-            "source": "llm",
+            "source": self.intent_parser.last_parse_report.get("source", "llm"),
+            "inputs": {"instruction": instruction},
+            "outputs": {
+                "alert_text": intent.alert_text,
+                "temporal_text": intent.temporal_text,
+                "explicit_route_ids": list(intent.explicit_route_ids),
+                "explicit_stop_ids": list(intent.explicit_stop_ids),
+                "location_phrases": list(intent.location_phrases),
+                "effect_hint": intent.effect_hint,
+                "cause_hint": intent.cause_hint,
+            },
+            "scores": {"parse_confidence": intent.parse_confidence},
+            "branch_decision": "llm_structured_intent",
+            "repair_used": self.intent_parser.last_parse_report.get("repair_used", False),
             "details": f"LLM extracted structured intent with confidence {intent.parse_confidence:.2f}.",
         })
 
@@ -137,7 +189,7 @@ class AlertCompiler:
         if not header:
             raise ValueError("Unable to derive a non-empty header from the request.")
 
-        temporal_text = intent.temporal_text or instruction or header
+        temporal_text = intent.temporal_text or temporal_source_text or header
         temporal_override = bool(intent.temporal_text or has_temporal_hint(instruction))
         temporal_confidence = 0.4
         active_periods: List[Dict[str, Any]] = []
@@ -150,7 +202,7 @@ class AlertCompiler:
             llm_periods = self.temporal_selector.resolve_periods(
                 llm=self.llm,
                 temporal_text=temporal_text,
-                full_instruction=instruction,
+                full_instruction=temporal_source_text,
                 resolver=self.temporal_resolver,
                 reference_dt=reference_dt,
             )
@@ -168,7 +220,18 @@ class AlertCompiler:
             active_periods = [{"start": now_iso}]
         compile_report["stages"].append({
             "stage": "temporal_resolution",
-            "source": "llm" if resolved_periods else "deterministic",
+            "source": self.temporal_selector.last_resolution_report.get("source", "llm" if resolved_periods else "deterministic"),
+            "inputs": {
+                "temporal_text": temporal_text,
+                "reference_dt": reference_dt.isoformat(),
+            },
+            "outputs": {"active_periods": active_periods},
+            "scores": {
+                "temporal_confidence": temporal_confidence,
+                "period_count": len(resolved_periods),
+            },
+            "repair_used": self.temporal_selector.last_resolution_report.get("repair_used", False),
+            "branch_decision": "resolved_periods" if resolved_periods else "immediate_start_fallback",
             "details": (
                 f"Resolved {len(resolved_periods)} active period(s) with the LLM-backed calendar selector."
                 if resolved_periods
@@ -187,29 +250,57 @@ class AlertCompiler:
         explicit_route_entities = [build_route_entity(self.retriever, rid) for rid in explicit_route_ids]
         explicit_stop_entities = [build_stop_entity(self.retriever, sid) for sid in explicit_stop_ids]
         seed_entities = dedupe_entities(explicit_route_entities + explicit_stop_entities)
-
-        affected_segments, alternative_segments = self.retriever._split_affected_and_alternative_segments(instruction)
-        affected_hints = self.retriever._extract_location_hints(". ".join(affected_segments))
-        alternative_hints = {h.lower() for h in self.retriever._extract_location_hints(". ".join(alternative_segments))}
+        evidence_location_hints = [
+            u.text
+            for u in evidence_units
+            if u.unit_type == "location_evidence"
+        ]
+        affected_hints = [
+            u.text
+            for u in evidence_units
+            if u.unit_type == "location_evidence" and u.source == "affected_service"
+        ] or evidence_location_hints
+        alternative_hints = {
+            str(u.text).strip().lower()
+            for u in evidence_units
+            if u.unit_type == "location_evidence" and u.source == "alternative_service"
+        }
         intent_hints = [
             h
             for h in intent.location_phrases
             if str(h).strip().lower() not in alternative_hints and not self.retriever.is_route_name_phrase(str(h))
         ]
-        if not affected_hints and not self.retriever._has_strong_stop_intent(instruction):
+        if not affected_hints and not self.retriever._has_strong_stop_intent(affected_source_text):
             intent_hints = []
         location_hints_override = merge_text_tokens(affected_hints, intent_hints)
 
         retrieval = self.retriever.retrieve_affected_entities(
-            instruction,
+            affected_source_text,
             seed_entities=seed_entities,
             route_ids_override=explicit_route_ids or None,
             location_hints_override=location_hints_override or None,
             max_stop_candidates=20,
         )
+        high_level_context = retrieval.get("high_level_context", {}) if isinstance(retrieval, dict) else {}
         compile_report["stages"].append({
             "stage": "entity_retrieval",
             "source": "deterministic",
+            "inputs": {
+                "retrieval_text": affected_source_text,
+                "location_hints_override": location_hints_override,
+                "seed_entities": seed_entities,
+            },
+            "outputs": {
+                "route_ids": retrieval.get("route_ids", []),
+                "location_hints": retrieval.get("location_hints", []),
+                "matched_stop_count": retrieval.get("matched_stop_count", 0),
+                "high_level_context": high_level_context,
+            },
+            "scores": {
+                "route_confidence": retrieval.get("route_confidence", 0.0),
+                "stop_confidence": retrieval.get("stop_confidence", 0.0),
+            },
+            "branch_decision": "graph_grounding_attempted",
             "details": (
                 f"Graph retrieval produced {len(retrieval.get('informed_entities', [])) if retrieval.get('status') == 'success' else 0} "
                 "candidate informed entities."
@@ -220,6 +311,33 @@ class AlertCompiler:
         inferred_route_entities = [e for e in retrieved_entities if e.get("route_id") and not e.get("stop_id")]
         inferred_stop_entities = [e for e in retrieved_entities if e.get("stop_id")]
         stop_candidates = retrieval.get("stop_candidates", []) if retrieval.get("status") == "success" else []
+        route_conf = float(retrieval.get("route_confidence", 0.0))
+        stop_conf = float(retrieval.get("stop_confidence", 0.0))
+        if explicit_route_ids:
+            route_conf = max(route_conf, 0.95)
+        if explicit_stop_ids:
+            stop_conf = max(stop_conf, 1.0)
+
+        retrieval_eval = self.retrieval_evaluator.evaluate(
+            retrieval=retrieval,
+            evidence_units=evidence_units,
+            route_confidence=route_conf,
+            stop_confidence=stop_conf,
+            temporal_override=temporal_override,
+        )
+        compile_report["stages"].append({
+            "stage": "retrieval_evaluation",
+            "source": "deterministic",
+            "inputs": {
+                "location_hints": retrieval.get("location_hints", []),
+                "matched_stop_count": retrieval.get("matched_stop_count", 0),
+                "has_stop_intent": retrieval.get("has_stop_intent", False),
+            },
+            "outputs": retrieval_eval.as_dict(),
+            "scores": retrieval_eval.as_dict(),
+            "branch_decision": retrieval_eval.state,
+            "details": "Retrieval branch was chosen from explicit graph-grounding quality signals.",
+        })
 
         allowed_route_ids = merge_unique_tokens(
             explicit_route_ids,
@@ -233,16 +351,29 @@ class AlertCompiler:
         if allowed_route_ids or stop_candidates:
             print("[DEBUG] Phase 4: Entity Selection...")
             llm_route_ids, llm_stop_ids, llm_entity_conf = self.entity_selector.llm_select_entities(
-                text="\n".join([header, instruction]).strip(),
+                text="\n".join([header, affected_source_text]).strip(),
                 allowed_route_ids=allowed_route_ids,
                 stop_candidates=stop_candidates,
                 locked_route_ids=explicit_route_ids,
                 locked_stop_ids=explicit_stop_ids,
                 location_hints=retrieval.get("location_hints", []),
+                high_level_context=high_level_context,
             )
         compile_report["stages"].append({
             "stage": "entity_selection",
-            "source": "llm" if (allowed_route_ids or stop_candidates) else "deterministic",
+            "source": self.entity_selector.last_selection_report.get("source", "llm" if (allowed_route_ids or stop_candidates) else "deterministic"),
+            "inputs": {
+                "allowed_route_ids": allowed_route_ids,
+                "locked_route_ids": list(explicit_route_ids),
+                "locked_stop_ids": list(explicit_stop_ids),
+            },
+            "outputs": {
+                "selected_route_ids": llm_route_ids,
+                "selected_stop_ids": llm_stop_ids,
+            },
+            "scores": {"entity_selection_confidence": llm_entity_conf},
+            "repair_used": self.entity_selector.last_selection_report.get("repair_used", False),
+            "branch_decision": "bounded_llm_selection" if (allowed_route_ids or stop_candidates) else "deterministic_only",
             "details": (
                 f"LLM selected {len(llm_route_ids)} route(s) and {len(llm_stop_ids)} stop(s) with confidence {llm_entity_conf:.2f}."
                 if (allowed_route_ids or stop_candidates)
@@ -250,7 +381,7 @@ class AlertCompiler:
             ),
         })
 
-        if llm_stop_ids and llm_entity_conf >= 0.65:
+        if llm_stop_ids and llm_entity_conf >= 0.65 and retrieval_eval.state != "CORRECTIVE_FALLBACK":
             self._bump_telemetry("inferred_stop_accept", len(llm_stop_ids))
 
         locked_stop_ids = {sid.upper() for sid in explicit_stop_ids}
@@ -258,12 +389,12 @@ class AlertCompiler:
             inferred_stop_entities = [
                 e for e in inferred_stop_entities if str(e.get("stop_id", "")).upper() in locked_stop_ids
             ]
-        elif llm_stop_ids and llm_entity_conf >= 0.65:
+        elif llm_stop_ids and llm_entity_conf >= 0.65 and retrieval_eval.state != "CORRECTIVE_FALLBACK":
             inferred_stop_entities = [build_stop_entity(self.retriever, sid) for sid in llm_stop_ids]
 
         inferred_stop_entities = self.entity_selector.choose_stops_for_single_location(
             stop_entities=inferred_stop_entities,
-            source_text="\n".join([header, instruction]),
+            source_text="\n".join([header, affected_source_text]),
             stop_candidates=stop_candidates,
             location_hints=retrieval.get("location_hints", []),
         )
@@ -275,32 +406,40 @@ class AlertCompiler:
         informed_entities = dedupe_entities(route_entities + stop_entities)
         informed_entities = normalize_entities_for_output(
             informed_entities,
-            "\n".join([header, instruction]),
+            "\n".join([header, affected_source_text]),
         )
 
-        route_conf = float(retrieval.get("route_confidence", 0.0))
-        stop_conf = float(retrieval.get("stop_confidence", 0.0))
-        if explicit_route_ids:
-            route_conf = max(route_conf, 0.95)
         if explicit_stop_ids:
             stop_conf = max(stop_conf, 1.0)
-        elif llm_entity_conf >= 0.65 and llm_stop_ids:
+        elif llm_entity_conf >= 0.65 and llm_stop_ids and retrieval_eval.state != "CORRECTIVE_FALLBACK":
             stop_conf = max(stop_conf, llm_entity_conf)
         if not route_conf and informed_entities:
             route_conf = 0.75
 
         print("[DEBUG] Phase 5: Enum Resolution...")
         cause_effect = self.enum_resolver.resolve(
-            text="\n".join([header, instruction]).strip(),
+            text="\n".join([header, rider_source_text]).strip(),
             cause_override=intent.cause_hint,
             effect_override=intent.effect_hint,
         )
         compile_report["stages"].append({
             "stage": "enum_resolution",
-            "source": "llm" if (
-                cause_effect.cause_confidence >= self.enum_confidence_threshold
-                or cause_effect.effect_confidence >= self.enum_confidence_threshold
-            ) else "deterministic",
+            "source": self.enum_resolver.last_resolution_report.get("source", "deterministic"),
+            "inputs": {
+                "text": "\n".join([header, rider_source_text]).strip(),
+                "cause_override": intent.cause_hint,
+                "effect_override": intent.effect_hint,
+            },
+            "outputs": {
+                "cause": cause_effect.cause,
+                "effect": cause_effect.effect,
+            },
+            "scores": {
+                "cause_confidence": cause_effect.cause_confidence,
+                "effect_confidence": cause_effect.effect_confidence,
+            },
+            "repair_used": self.enum_resolver.last_resolution_report.get("repair_used", False),
+            "branch_decision": "llm_enum_classifier",
             "details": (
                 f"Cause/effect were accepted from the LLM classifier ({cause_effect.cause_confidence:.2f}/{cause_effect.effect_confidence:.2f})."
                 if (cause_effect.cause_confidence >= self.enum_confidence_threshold or cause_effect.effect_confidence >= self.enum_confidence_threshold)
@@ -311,12 +450,17 @@ class AlertCompiler:
         schema_conf = 1.0
         confidence = global_confidence(route_conf, stop_conf, temporal_confidence, schema_conf)
 
-        should_try_fallback = bool(retrieval.get("fallback_needed", False)) or (confidence < self.confidence_threshold)
+        should_try_fallback = (
+            retrieval_eval.state == "CORRECTIVE_FALLBACK"
+            and bool(retrieval.get("has_stop_intent") or retrieval.get("location_hints"))
+        )
         fallback_attempted = False
         fallback_used = False
         fallback_success = False
         fallback_conf = 0.0
         fallback_added_count = 0
+        fallback_outcome = "unused"
+        fallback_trigger_reason = retrieval_eval.trigger_reason if should_try_fallback else "not_needed"
         if should_try_fallback:
             print("[DEBUG] Phase 6: Fallback...")
             fallback_attempted = True
@@ -337,12 +481,29 @@ class AlertCompiler:
                 fallback_added_count = max(0, len(informed_entities) - before_count)
                 if fallback_added_count > 0:
                     fallback_used = True
+                    fallback_outcome = "accepted"
                     self._bump_telemetry("fallback_used")
                     stop_conf = max(stop_conf, float(fallback.get("confidence", 0.0)))
                     confidence = global_confidence(route_conf, stop_conf, temporal_confidence, schema_conf)
+                else:
+                    fallback_outcome = "attempted_no_change"
+            else:
+                fallback_outcome = "attempted_no_match"
         compile_report["stages"].append({
             "stage": "geocode_fallback",
             "source": "deterministic",
+            "inputs": {
+                "location_hints": retrieval.get("location_hints", []),
+                "route_ids": [str(e["route_id"]) for e in informed_entities if isinstance(e, dict) and e.get("route_id")],
+            },
+            "outputs": {
+                "fallback_outcome": fallback_outcome,
+                "fallback_added_count": fallback_added_count,
+            },
+            "scores": {
+                "fallback_confidence": fallback_conf,
+            },
+            "branch_decision": fallback_trigger_reason,
             "details": (
                 f"External geocode fallback added {fallback_added_count} new "
                 f"{'entity' if fallback_added_count == 1 else 'entities'} with confidence {fallback_conf:.2f}."
@@ -359,6 +520,8 @@ class AlertCompiler:
                 )
             ),
         })
+        if should_try_fallback and fallback_outcome != "accepted" and not explicit_stop_ids:
+            informed_entities = conservative_entities(informed_entities)
 
         preserve_stops = should_preserve_stops_under_low_confidence(
             entities=informed_entities,
@@ -367,7 +530,7 @@ class AlertCompiler:
             fallback_used=fallback_used,
             fallback_conf=fallback_conf,
         )
-        if confidence < self.confidence_threshold and not preserve_stops and not explicit_stop_ids:
+        if (confidence < self.confidence_threshold or retrieval_eval.state == "CORRECTIVE_FALLBACK") and not preserve_stops and not explicit_stop_ids:
             informed_entities = conservative_entities(informed_entities)
 
         route_ids_for_text: List[str] = [
@@ -382,9 +545,19 @@ class AlertCompiler:
             effect=cause_effect.effect,
             text_mode=request.text_mode,
             header_hint=header_hint if request.text_mode == "rewrite" else None,
+            rider_source_override=rider_source_text,
+            high_level_context=high_level_context,
         )
         compile_report["stages"].append({
             "stage": "text_mode_resolution",
+            "inputs": {
+                "route_ids": route_ids_for_text,
+                "rider_source": rider_source_text,
+            },
+            "outputs": {
+                "header_text": header_text,
+                "description_text": description,
+            },
             **self.text_mode_resolver.last_resolution_report,
         })
         header = self.text_renderer.replace_stop_ids_with_names(header_text, informed_entities)
@@ -418,10 +591,21 @@ class AlertCompiler:
             effect=effect_out,
             active_periods=active_periods,
             informed_entities=informed_entities,
+            high_level_context=high_level_context,
         )
         compile_report["stages"].append({
             "stage": "mercury_resolution",
-            "source": "llm" if mercury_selection.confidence >= self.enum_confidence_threshold else "deterministic",
+            "inputs": {
+                "header_text": header.strip(),
+                "description_text": description.strip() if description else None,
+                "high_level_context": high_level_context,
+            },
+            "outputs": {
+                "priority_key": mercury_selection.priority_key,
+                "priority_number": mercury_selection.priority_number,
+            },
+            "scores": {"confidence": mercury_selection.confidence},
+            **self.mercury_resolver.last_resolution_report,
             "details": (
                 f"Mercury priority came from the LLM classifier with confidence {mercury_selection.confidence:.2f}."
                 if mercury_selection.confidence >= self.enum_confidence_threshold
@@ -452,8 +636,40 @@ class AlertCompiler:
         )
         compile_report["stages"].append({
             "stage": "payload_building",
+            "inputs": {
+                "alert_id": alert_id,
+                "entity_count": len(informed_entities),
+            },
+            "outputs": {
+                "payload_keys": list(payload.keys()),
+            },
             **self.output_builder.last_variants_report,
         })
+        compile_report["telemetry"] = {
+            "retrieval_state": retrieval_eval.state,
+            "fallback_trigger_reason": fallback_trigger_reason,
+            "fallback_outcome": fallback_outcome,
+            "evidence_units_used": len(evidence_units),
+            "schema_repair_used": bool(
+                self.intent_parser.last_parse_report.get("repair_used")
+                or self.entity_selector.last_selection_report.get("repair_used")
+                or self.temporal_selector.last_resolution_report.get("repair_used")
+                or self.enum_resolver.last_resolution_report.get("repair_used")
+                or self.text_mode_resolver.last_resolution_report.get("repair_used")
+                or self.mercury_resolver.last_resolution_report.get("repair_used")
+                or self.output_builder.last_variants_report.get("repair_used")
+            ),
+            "command_strip_applied": rider_source_text != instruction,
+            "high_level_context_used": any(bool(v) for v in high_level_context.values()) if isinstance(high_level_context, dict) else False,
+        }
+        compile_report["final"] = {
+            "confidence": round(confidence, 3),
+            "route_confidence": round(route_conf, 3),
+            "stop_confidence": round(stop_conf, 3),
+            "temporal_confidence": round(temporal_confidence, 3),
+            "entity_count": len(informed_entities),
+            "route_count": len(route_ids_for_text),
+        }
         self.last_compile_report = compile_report
         return payload
 

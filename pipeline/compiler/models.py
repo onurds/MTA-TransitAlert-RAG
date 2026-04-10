@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -81,3 +81,50 @@ class CauseEffectResult:
     effect: str = UNKNOWN_EFFECT
     cause_confidence: float = 0.0
     effect_confidence: float = 0.0
+
+
+EvidenceUnitType = Literal[
+    "affected_service",
+    "alternative_service",
+    "temporal_directive",
+    "operator_control",
+    "rider_guidance",
+    "location_evidence",
+]
+
+RetrievalState = Literal["ACCEPT", "AMBIGUOUS", "CORRECTIVE_FALLBACK"]
+
+
+@dataclass(frozen=True)
+class EvidenceUnit:
+    unit_type: EvidenceUnitType
+    text: str
+    source: str = "instruction"
+
+
+@dataclass(frozen=True)
+class RetrievalEvaluationResult:
+    state: RetrievalState
+    score: float
+    route_confidence: float
+    stop_confidence: float
+    location_hint_quality: float
+    evidence_agreement: float
+    temporal_bonus: float
+    trigger_reason: str
+    location_hint_count: int = 0
+    matched_stop_count: int = 0
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "state": self.state,
+            "score": round(float(self.score), 3),
+            "route_confidence": round(float(self.route_confidence), 3),
+            "stop_confidence": round(float(self.stop_confidence), 3),
+            "location_hint_quality": round(float(self.location_hint_quality), 3),
+            "evidence_agreement": round(float(self.evidence_agreement), 3),
+            "temporal_bonus": round(float(self.temporal_bonus), 3),
+            "trigger_reason": self.trigger_reason,
+            "location_hint_count": int(self.location_hint_count),
+            "matched_stop_count": int(self.matched_stop_count),
+        }

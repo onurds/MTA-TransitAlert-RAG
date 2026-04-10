@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Sequence
 
 from .confidence import coerce_confidence
 from .models import ActivePeriod, InformedEntity, MULTI_LANG_CODES, MercuryAlert
-from .utils import extract_llm_text_content
+from .utils import invoke_json_with_repair
 
 
 class OutputBuilder:
@@ -17,6 +17,7 @@ class OutputBuilder:
         self.last_variants_report: Dict[str, Any] = {
             "source": "deterministic",
             "details": "No variant generation run yet.",
+            "repair_used": False,
         }
 
     def build_payload(
@@ -111,12 +112,14 @@ class OutputBuilder:
             self.last_variants_report = {
                 "source": "deterministic",
                 "details": "Variant generation was skipped because header text was empty.",
+                "repair_used": False,
             }
             return out
         if not self.ensure_llm():
             self.last_variants_report = {
                 "source": "deterministic",
                 "details": "LLM was unavailable, so deterministic TTS fallback and plain-text copies were used.",
+                "repair_used": False,
             }
             return out
 
@@ -125,6 +128,7 @@ class OutputBuilder:
             self.last_variants_report = {
                 "source": "deterministic",
                 "details": "LLM handle was unavailable, so deterministic TTS fallback and plain-text copies were used.",
+                "repair_used": False,
             }
             return out
 
@@ -143,14 +147,32 @@ class OutputBuilder:
             f"DESCRIPTION_EN: {description}\n"
         )
         try:
-            resp = llm.invoke(prompt)
-            content = extract_llm_text_content(resp)
-            parsed = self._extract_first_json_object(content)
+            parsed, repair_used = invoke_json_with_repair(
+                llm=llm,
+                prompt=prompt,
+                required_keys=(
+                    "header_zh",
+                    "header_es",
+                    "description_zh",
+                    "description_es",
+                    "tts_header",
+                    "tts_description",
+                    "confidence",
+                ),
+                repair_prompt_builder=lambda bad: (
+                    "/no_think\n"
+                    "Repair this variant-generation output. Return strict JSON only with "
+                    "header_zh, header_es, description_zh, description_es, tts_header, "
+                    "tts_description, confidence.\n"
+                    f"RAW_OUTPUT:\n{bad}"
+                ),
+            )
             conf = coerce_confidence(parsed.get("confidence", 0.0))
             if conf < 0.6:
                 self.last_variants_report = {
                     "source": "deterministic",
                     "details": "LLM variant generation returned low confidence, so deterministic fallbacks were used.",
+                    "repair_used": repair_used,
                 }
                 return out
 
@@ -163,12 +185,14 @@ class OutputBuilder:
             self.last_variants_report = {
                 "source": "llm",
                 "details": "LLM generated multilingual and TTS variants.",
+                "repair_used": repair_used,
             }
             return out
         except Exception:
             self.last_variants_report = {
                 "source": "deterministic",
                 "details": "LLM variant generation failed, so deterministic fallbacks were used.",
+                "repair_used": False,
             }
             return out
 

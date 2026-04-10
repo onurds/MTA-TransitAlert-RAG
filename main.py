@@ -66,8 +66,15 @@ async def healthz():
         "calendar_path": CALENDAR_PATH,
         "confidence_threshold": CONFIDENCE_THRESHOLD,
         "enum_confidence_threshold": ENUM_CONFIDENCE_THRESHOLD,
+        "baseline_config": dict(engine.compiler.baseline_config),
         "telemetry": dict(engine.compiler.telemetry),
     }
+
+
+@app.get("/debug/last_compile_report")
+async def last_compile_report():
+    engine: CompileEngine = app.state.engine
+    return engine.compiler.last_compile_report
 
 
 @app.post("/compile")

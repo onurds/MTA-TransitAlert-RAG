@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from pipeline.temporal_resolver import ResolvedPeriod, TemporalResolver
 
 from .confidence import coerce_confidence
-from .utils import extract_first_json_object, extract_llm_text_content
+from .utils import invoke_json_with_repair
 
 
 class TemporalSelector:
@@ -16,6 +16,13 @@ class TemporalSelector:
     - LLM picks concrete date/time components using calendar context.
     - Conversion to ISO periods remains deterministic.
     """
+
+    def __init__(self) -> None:
+        self.last_resolution_report: Dict[str, Any] = {
+            "source": "deterministic",
+            "repair_used": False,
+            "period_count": 0,
+        }
 
     def resolve_periods(
         self,
@@ -56,14 +63,28 @@ class TemporalSelector:
         )
 
         try:
-            response = llm.invoke(prompt)
-            content = extract_llm_text_content(response)
-            parsed = extract_first_json_object(content)
+            parsed, repair_used = invoke_json_with_repair(
+                llm=llm,
+                prompt=prompt,
+                required_keys=("periods", "confidence"),
+                repair_prompt_builder=lambda bad: (
+                    "/no_think\n"
+                    "Repair this temporal selector output. Return strict JSON only with "
+                    "periods and confidence.\n"
+                    f"RAW_OUTPUT:\n{bad}"
+                ),
+            )
         except Exception:
             return []
 
         confidence = coerce_confidence(parsed.get("confidence", 0.0))
         if confidence < 0.55:
+            self.last_resolution_report = {
+                "source": "deterministic",
+                "repair_used": False,
+                "period_count": 0,
+                "confidence": confidence,
+            }
             return []
 
         periods = parsed.get("periods", [])
@@ -111,6 +132,12 @@ class TemporalSelector:
                     source="llm_calendar_selector",
                 )
             )
+        self.last_resolution_report = {
+            "source": "llm" if out else "deterministic",
+            "repair_used": repair_used,
+            "period_count": len(out),
+            "confidence": confidence,
+        }
         return out
 
     @staticmethod

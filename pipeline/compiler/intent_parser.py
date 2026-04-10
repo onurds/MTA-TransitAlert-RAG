@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
 import re
 import traceback
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from .confidence import coerce_confidence
 from .models import IntentParseResult
-from .utils import extract_llm_text_content
+from .utils import invoke_json_with_repair
 
 
 class IntentParser:
@@ -22,6 +21,10 @@ class IntentParser:
         self.ensure_llm = ensure_llm
         self.llm_getter = llm_getter
         self.bump_telemetry = bump_telemetry
+        self.last_parse_report: Dict[str, Any] = {
+            "source": "deterministic",
+            "repair_used": False,
+        }
 
     def parse(self, instruction: str) -> IntentParseResult:
         text = (instruction or "").strip()
@@ -116,11 +119,27 @@ class IntentParser:
 
         try:
             print(f"[DEBUG] Calling LLM with prompt (compact={compact})...")
-            response = llm.invoke(prompt)
-            print(f"[DEBUG] LLM response received: {type(response)}")
-            content = extract_llm_text_content(response)
-            print(f"[DEBUG] Extracted content: {content[:100]}...")
-            parsed = self._extract_first_json_object(content)
+            parsed, repair_used = invoke_json_with_repair(
+                llm=llm,
+                prompt=prompt,
+                required_keys=(
+                    "alert_text",
+                    "temporal_text",
+                    "explicit_route_ids",
+                    "explicit_stop_ids",
+                    "location_phrases",
+                    "effect_hint",
+                    "cause_hint",
+                    "style_intent",
+                    "parse_confidence",
+                ),
+                repair_prompt_builder=lambda bad: (
+                    "/no_think\n"
+                    "Repair the following malformed or incomplete JSON for the transit intent extractor. "
+                    "Return strict JSON only with the required keys and use null or [] when missing.\n"
+                    f"RAW_OUTPUT:\n{bad}"
+                ),
+            )
             print(f"[DEBUG] Parsed JSON: {parsed}")
             alert_text = str(parsed.get("alert_text") or "").strip() or None
             temporal_text = str(parsed.get("temporal_text") or "").strip() or None
@@ -145,6 +164,10 @@ class IntentParser:
             if not alert_text and not temporal_text and not route_ids and not stop_ids and not locations:
                 return None
 
+            self.last_parse_report = {
+                "source": "llm",
+                "repair_used": repair_used,
+            }
             return IntentParseResult(
                 alert_text=alert_text,
                 temporal_text=temporal_text,
@@ -170,21 +193,6 @@ class IntentParser:
     def _extract_explicit_route_ids(self, text: str) -> List[str]:
         tokens = self.retriever._route_tokens_from_text(text)
         return self._merge_unique_tokens(tokens)
-
-    @staticmethod
-    def _extract_first_json_object(text: str) -> Dict[str, Any]:
-        try:
-            return json.loads(text)
-        except Exception:
-            pass
-
-        m = re.search(r"\{.*\}", text, flags=re.DOTALL)
-        if not m:
-            return {}
-        try:
-            return json.loads(m.group(0))
-        except Exception:
-            return {}
 
     @staticmethod
     def _merge_unique_tokens(*groups: Sequence[str]) -> List[str]:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from pipeline.gtfs_rules import (
     CAUSE_ENUMS,
@@ -13,7 +13,7 @@ from pipeline.gtfs_rules import (
 
 from .confidence import coerce_confidence
 from .models import CauseEffectResult
-from .utils import extract_first_json_object, extract_llm_text_content
+from .utils import invoke_json_with_repair
 
 
 class EnumResolver:
@@ -21,6 +21,10 @@ class EnumResolver:
         self.ensure_llm = ensure_llm
         self.llm_getter = llm_getter
         self.min_confidence = coerce_confidence(min_confidence)
+        self.last_resolution_report: Dict[str, Any] = {
+            "source": "deterministic",
+            "repair_used": False,
+        }
 
     def resolve(
         self,
@@ -66,6 +70,14 @@ class EnumResolver:
             effect = UNKNOWN_EFFECT
             effect_conf = 0.0 if not llm_has_values else effect_conf
 
+        self.last_resolution_report = {
+            "source": "llm" if llm_has_values else "deterministic",
+            "repair_used": bool(getattr(self, "_last_repair_used", False)),
+            "cause": cause,
+            "effect": effect,
+            "cause_confidence": cause_conf,
+            "effect_confidence": effect_conf,
+        }
         return CauseEffectResult(
             cause=cause,
             effect=effect,
@@ -92,9 +104,18 @@ class EnumResolver:
         )
 
         try:
-            response = llm.invoke(prompt)
-            content = extract_llm_text_content(response)
-            json_obj = extract_first_json_object(content)
+            json_obj, repair_used = invoke_json_with_repair(
+                llm=llm,
+                prompt=prompt,
+                required_keys=("cause", "effect", "cause_confidence", "effect_confidence"),
+                repair_prompt_builder=lambda bad: (
+                    "/no_think\n"
+                    "Repair this GTFS enum classifier output. Return strict JSON only with "
+                    "cause, effect, cause_confidence, effect_confidence.\n"
+                    f"RAW_OUTPUT:\n{bad}"
+                ),
+            )
+            self._last_repair_used = repair_used
             raw_cause = str(json_obj.get("cause", "") or "").strip()
             raw_effect = str(json_obj.get("effect", "") or "").strip()
             has_values = bool(raw_cause or raw_effect)
@@ -105,6 +126,7 @@ class EnumResolver:
                 effect_confidence=coerce_confidence(json_obj.get("effect_confidence", 0.0)),
             ), has_values
         except Exception:
+            self._last_repair_used = False
             return CauseEffectResult(cause="", effect="", cause_confidence=0.0, effect_confidence=0.0), False
 
     @staticmethod

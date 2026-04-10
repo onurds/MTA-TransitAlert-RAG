@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple
 
-from .utils import extract_llm_text_content
+from .utils import extract_llm_text_content, invoke_json_with_repair
 
 
 TextMode = Literal["default", "rewrite"]
@@ -27,26 +27,36 @@ class TextModeResolver:
         effect: str,
         text_mode: TextMode,
         header_hint: Optional[str] = None,
+        rider_source_override: Optional[str] = None,
+        high_level_context: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, Optional[str]]:
         self.last_resolution_report = {
             "source": "deterministic",
             "details": "Deterministic fallback was used.",
+            "repair_used": False,
+            "command_strip_applied": False,
         }
         source_text = self._normalize_blocks(instruction)
         if not source_text:
             self.last_resolution_report = {
                 "source": "deterministic",
                 "details": "Input was empty after normalization.",
+                "repair_used": False,
+                "command_strip_applied": False,
             }
             return "", None
         effective_header_hint = header_hint if text_mode == "rewrite" else None
-        rider_source = source_text
-        if llm is not None:
+        rider_source = self._normalize_blocks(rider_source_override or "")
+        command_strip_applied = bool(rider_source)
+        if not rider_source and llm is not None:
             rider_source = self._llm_extract_rider_source(
                 llm=llm,
                 source_text=source_text,
                 text_mode=text_mode,
             )
+            command_strip_applied = rider_source != source_text
+        if not rider_source:
+            rider_source = source_text
 
         if llm is not None:
             for attempt in ("base", "repair"):
@@ -61,11 +71,20 @@ class TextModeResolver:
                     text_mode=text_mode,
                     header_hint=effective_header_hint,
                     attempt=attempt,
+                    high_level_context=high_level_context,
                 )
                 try:
-                    resp = llm.invoke(prompt)
-                    content = extract_llm_text_content(resp)
-                    parsed = self._extract_first_json_object(content)
+                    parsed, repair_used = invoke_json_with_repair(
+                        llm=llm,
+                        prompt=prompt,
+                        required_keys=("header_text", "description_text", "confidence"),
+                        repair_prompt_builder=lambda bad: (
+                            "/no_think\n"
+                            "Repair this transit text layout output. Return strict JSON only with "
+                            "header_text, description_text, confidence.\n"
+                            f"RAW_OUTPUT:\n{bad}"
+                        ),
+                    )
                     header = self._normalize_blocks(parsed.get("header_text") or parsed.get("header") or "")
                     description_raw = parsed.get("description_text")
                     if description_raw is None:
@@ -89,6 +108,8 @@ class TextModeResolver:
                         self.last_resolution_report = {
                             "source": "llm",
                             "details": f"LLM layout succeeded on the {attempt} attempt.",
+                            "repair_used": repair_used,
+                            "command_strip_applied": command_strip_applied,
                         }
                         return header, description
                     self._bump("text_layout_validation_fail")
@@ -101,6 +122,8 @@ class TextModeResolver:
         self.last_resolution_report = {
             "source": "deterministic",
             "details": "LLM layout failed validation or invocation, so deterministic fallback was used.",
+            "repair_used": False,
+            "command_strip_applied": command_strip_applied,
         }
         return self._deterministic_fallback(
             source_text=rider_source,
@@ -118,6 +141,7 @@ class TextModeResolver:
         text_mode: TextMode,
         header_hint: Optional[str],
         attempt: str,
+        high_level_context: Optional[Dict[str, Any]],
     ) -> str:
         mode_instructions = self._default_mode_rules() if text_mode == "default" else self._rewrite_mode_rules()
         repair_block = ""
@@ -149,6 +173,7 @@ class TextModeResolver:
             f"ROUTES: {list(route_ids)}\n"
             f"CAUSE: {cause}\n"
             f"EFFECT: {effect}\n"
+            f"HIGH_LEVEL_CONTEXT: {json.dumps(high_level_context or {}, ensure_ascii=False)}\n"
         )
 
     @staticmethod
@@ -206,9 +231,17 @@ class TextModeResolver:
             f"CURRENT_DESCRIPTION:\n{description or 'null'}\n"
         )
         try:
-            resp = llm.invoke(prompt)
-            content = extract_llm_text_content(resp)
-            parsed = self._extract_first_json_object(content)
+            parsed, _repair_used = invoke_json_with_repair(
+                llm=llm,
+                prompt=prompt,
+                required_keys=("header_text", "description_text"),
+                repair_prompt_builder=lambda bad: (
+                    "/no_think\n"
+                    "Repair this operator-command cleanup output. Return strict JSON only with "
+                    "header_text and description_text.\n"
+                    f"RAW_OUTPUT:\n{bad}"
+                ),
+            )
             cleaned_header = self._normalize_blocks(parsed.get("header_text") or header)
             cleaned_description_raw = parsed.get("description_text")
             if cleaned_description_raw is None:
@@ -242,9 +275,16 @@ class TextModeResolver:
             f"OPERATOR_INPUT:\n{source_text}\n"
         )
         try:
-            resp = llm.invoke(prompt)
-            content = extract_llm_text_content(resp)
-            parsed = self._extract_first_json_object(content)
+            parsed, _repair_used = invoke_json_with_repair(
+                llm=llm,
+                prompt=prompt,
+                required_keys=("rider_text",),
+                repair_prompt_builder=lambda bad: (
+                    "/no_think\n"
+                    "Repair this rider-text extraction output. Return strict JSON only with rider_text.\n"
+                    f"RAW_OUTPUT:\n{bad}"
+                ),
+            )
             rider_text = self._normalize_blocks(parsed.get("rider_text") or "")
             return rider_text or source_text
         except Exception:

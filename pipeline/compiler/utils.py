@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 from datetime import UTC, datetime
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 def extract_first_json_object(text: str) -> Dict[str, Any]:
@@ -39,6 +39,37 @@ def extract_llm_text_content(response: Any) -> str:
         if parts:
             return "\n".join(parts)
     return str(content or "")
+
+
+def invoke_json_with_repair(
+    llm: Any,
+    prompt: str,
+    required_keys: Iterable[str],
+    repair_prompt_builder: Optional[Callable[[str], str]] = None,
+) -> Tuple[Dict[str, Any], bool]:
+    response = llm.invoke(prompt)
+    content = extract_llm_text_content(response)
+    parsed = extract_first_json_object(content)
+    if _has_required_keys(parsed, required_keys):
+        return parsed, False
+
+    if repair_prompt_builder is None:
+        return parsed, False
+
+    repair_prompt = repair_prompt_builder(content)
+    repair_response = llm.invoke(repair_prompt)
+    repair_content = extract_llm_text_content(repair_response)
+    repaired = extract_first_json_object(repair_content)
+    return repaired, True
+
+
+def _has_required_keys(payload: Any, required_keys: Iterable[str]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    for key in required_keys:
+        if key not in payload:
+            return False
+    return True
 
 
 def has_temporal_hint(text: str) -> bool:

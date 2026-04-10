@@ -1,22 +1,29 @@
 # MTA Transit Alert Compiler
 
-A guardrailed compiler that converts free-form operator text into GTFS-shaped alert JSON.
+Graph-grounded, retrieval-augmented structured alert generation for GTFS-style transit alerts.
+
+The system converts free-form operator instructions into schema-valid alert JSON while keeping route and stop grounding tied to an authoritative GTFS-derived transit graph.
 
 ## Runtime Contract
 
-- Endpoint: `POST /compile`
-- Request is instruction-only:
+- Main endpoint: `POST /compile`
+- Debug trace endpoint: `GET /debug/last_compile_report`
+- Health endpoint: `GET /healthz`
+
+Request body:
 
 ```json
 {
   "instruction": "Southbound Q52-SBS and Q53-SBS will not stop at stop id 553345. Tomorrow 8pm to 11pm.",
   "llm_provider": "optional",
   "llm_model": "optional",
-  "llm_reasoning_effort": "optional"
+  "llm_reasoning_effort": "optional",
+  "text_mode": "default"
 }
 ```
 
-- Response schema (stable):
+Stable response fields:
+
 1. `id`
 2. `active_period`
 3. `informed_entity`
@@ -26,15 +33,68 @@ A guardrailed compiler that converts free-form operator text into GTFS-shaped al
 7. `description_text`
 8. `tts_header_text`
 9. `tts_description_text`
+10. `mercury_alert`
 
-## Architecture
+The public `/compile` schema is intentionally stable. Internal diagnostics are exposed through `/debug/last_compile_report` instead of being added to the compile payload.
 
-- LLM-first intent parsing for free-form text.
-- Deterministic GTFS graph grounding via NetworkX (`MTA_GTFS` derived graph).
-- Bounded LLM selection over candidate routes/stops only.
-- Deterministic temporal normalization.
-- Confidence-gated Google Maps fallback.
-- Strict output assembly with GTFS text containers and translation/TTS nodes.
+## Current Methodology
+
+This is not document-chunk RAG. The system is a graph-grounded retrieval pipeline with bounded LLM reasoning.
+
+High-level flow:
+
+1. Evidence decomposition splits the operator instruction into typed units such as affected service, alternative service, temporal directives, operator-control text, rider guidance, and location evidence.
+2. LLM intent parsing extracts structured hints: route IDs, stop IDs, location phrases, temporal text, cause/effect hints, and a header hint.
+3. Deterministic graph retrieval grounds routes and stop candidates over a GTFS-derived NetworkX graph.
+4. A retrieval evaluator assigns one of three states:
+   - `ACCEPT`
+   - `AMBIGUOUS`
+   - `CORRECTIVE_FALLBACK`
+5. Bounded LLM entity selection chooses only from retrieved route and stop candidates.
+6. Temporal resolution is hybrid:
+   - LLM proposes candidate periods from calendar context
+   - deterministic validation normalizes accepted periods
+7. Cause/effect and Mercury priority are resolved with schema-checked LLM classifiers plus conservative fallback behavior.
+8. Corrective geocode fallback is used only when retrieval state is `CORRECTIVE_FALLBACK` and stop intent is present.
+9. Output building assembles GTFS-style JSON plus multilingual and TTS text variants.
+
+Methodological framing:
+
+- graph-grounded retrieval-augmented structured alert generation
+- neuro-symbolic transit alert compilation
+- corrective retrieval with schema-constrained intermediate outputs
+
+## Retrieval Model
+
+The retrieval layer has two levels:
+
+- Low-level retrieval:
+  authoritative route and stop grounding from the GTFS graph
+- High-level retrieval:
+  advisory context such as route families, corridor stop names, route co-occurrence, agency context, and alert-pattern hints
+
+High-level retrieval can influence disambiguation, text layout, and Mercury selection, but it does not invent final `route_id` or `stop_id` values. Final `informed_entity` values remain graph-grounded.
+
+## Diagnostics and Telemetry
+
+Each compile run stores a structured stage trace in memory and exposes it through:
+
+```bash
+curl http://127.0.0.1:8000/debug/last_compile_report
+```
+
+The trace includes:
+
+- baseline config snapshot
+- per-stage inputs, outputs, scores, and branch decisions
+- retrieval state
+- fallback trigger reason and fallback outcome
+- evidence unit count
+- schema-repair usage
+- command-strip usage
+- whether high-level context was used
+
+The Gradio API mode reads this endpoint automatically to populate the Stage Report tab.
 
 ## Code Layout
 
@@ -44,11 +104,18 @@ pipeline/
 │   ├── __init__.py
 │   ├── models.py
 │   ├── orchestrator.py
+│   ├── evidence.py
+│   ├── retrieval_evaluator.py
 │   ├── intent_parser.py
 │   ├── entity_selector.py
+│   ├── temporal_selector.py
+│   ├── enum_resolver.py
+│   ├── mercury_resolver.py
+│   ├── text_mode_resolver.py
 │   ├── text_renderer.py
 │   ├── output_builder.py
-│   └── confidence.py
+│   ├── confidence.py
+│   └── utils.py
 ├── graph/
 │   ├── __init__.py
 │   ├── service.py
@@ -58,90 +125,147 @@ pipeline/
 │   ├── location_hints.py
 │   ├── stop_matcher.py
 │   └── geocode_fallback.py
-├── graph_retriever.py  # compatibility re-export
+├── graph_retriever.py
 ├── temporal_resolver.py
 ├── gtfs_rules.py
 └── llm_config.py
 ```
+
+Important entry points:
+
+- API: [main.py](/Users/onurds/Documents/student_NLP1/Conference/MTA-TransitAlert-RAG/main.py)
+- compiler orchestrator: [orchestrator.py](/Users/onurds/Documents/student_NLP1/Conference/MTA-TransitAlert-RAG/pipeline/compiler/orchestrator.py)
+- graph service: [service.py](/Users/onurds/Documents/student_NLP1/Conference/MTA-TransitAlert-RAG/pipeline/graph/service.py)
+- evaluation runner: [eval_api.py](/Users/onurds/Documents/student_NLP1/Conference/MTA-TransitAlert-RAG/scripts/eval_api.py)
+- Gradio UI: [gradio_app.py](/Users/onurds/Documents/student_NLP1/Conference/MTA-TransitAlert-RAG/scripts/gradio_app.py)
 
 ## LLM Providers
 
 Supported providers:
 
 - `gemini`
-- `openrouter` (default: `x-ai/grok-4.1-fast`)
-- `local` (any OpenAI-compatible local server, e.g. vLLM, mlx-lm)
+- `openrouter`
+- `local`
 
-Key files:
+Key credential files:
 
-- Gemini: `.gemini_api` (also `.vscode/.gemini_api`)
+- Gemini: `.gemini_api` or `.vscode/.gemini_api`
 - OpenRouter: `.vscode/.openrouter_api`
 - Google Maps fallback: `.vscode/.gmaps_api`
 
-Optional timeout env:
+Useful environment variables:
 
-- `LLM_TIMEOUT_SECONDS` (default `180`)
-- `GMAPS_TIMEOUT_SECONDS` (default `8`)
-- `ENUM_CONFIDENCE_THRESHOLD` (default `0.6`)
+- `LLM_TIMEOUT_SECONDS` default `180`
+- `GMAPS_TIMEOUT_SECONDS` default `8`
+- `CONFIDENCE_THRESHOLD` default `0.85`
+- `ENUM_CONFIDENCE_THRESHOLD` default `0.6`
+- `OPENROUTER_REASONING_EFFORT` default `none`
+- `GRAPH_PATH`
+- `CALENDAR_PATH`
+- `LOCAL_TIMEZONE`
 
-OpenRouter reasoning:
+Request-level OpenRouter override:
 
-- `OPENROUTER_REASONING_EFFORT` (default `none`)
-- Request override: `llm_reasoning_effort` with values `none|minimal|low|medium|high|xhigh`
+- `llm_reasoning_effort` with `none|minimal|low|medium|high|xhigh`
 
 ## Quick Start
+
+Install dependencies and run the API:
 
 ```bash
 pip install -r requirements.txt
 uvicorn main:app --reload
 ```
 
-Health:
+Health check:
 
 ```bash
 curl http://127.0.0.1:8000/healthz
 ```
 
-Compile:
+Compile example:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/compile \
   -H "Content-Type: application/json" \
-  -d '{"instruction":"Southbound BxM2 and BxM3 buses are detoured at Madison Ave and E 96th St from 07:15 AM to 09:45 AM today."}'
+  -d '{
+    "instruction":"Southbound BxM2 and BxM3 buses are detoured at Madison Ave and E 96th St from 07:15 AM to 09:45 AM today.",
+    "text_mode":"default"
+  }'
+```
+
+Fetch last trace:
+
+```bash
+curl http://127.0.0.1:8000/debug/last_compile_report
 ```
 
 ## Interactive Testing
+
+CLI helper:
 
 ```bash
 python3 scripts/interactive_compile.py --ask-model
 ```
 
-Results append as pretty JSON to `data/interactive_results.json`.
+Interactive results append to `data/interactive_results.json`.
 
 ## Gradio Frontend
 
-Local in-process compiler UI:
+Local in-process UI:
 
 ```bash
 python3 scripts/gradio_app.py
 ```
 
-If a local compile gets stuck, use the **Reset Local Compiler** button in the UI, or set a shorter local timeout:
-
-```bash
-python3 scripts/gradio_app.py --local-timeout 120 --llm-timeout 30
-```
-
-API-backed UI (if your FastAPI server is already running):
+API-backed UI:
 
 ```bash
 uvicorn main:app --reload
 python3 scripts/gradio_app.py --mode api --api-url http://127.0.0.1:8000/compile
 ```
 
-## Evaluation and Tests
+The API-backed Stage Report tab uses `/debug/last_compile_report`.
+
+## Evaluation
+
+Run the live API evaluation:
 
 ```bash
 python3 scripts/eval_api.py --limit 50
-pytest tests/test_graph_retriever.py tests/test_compiler.py
+```
+
+Useful options:
+
+- `--output-json results/eval.json`
+- `--trace-url http://127.0.0.1:8000/debug/last_compile_report`
+- `--text-mode default`
+- `--shuffle`
+
+The evaluation runner now stores per-example compile traces when a trace endpoint is available and reports:
+
+- route grounding
+- stop grounding
+- active-period accuracy
+- command leakage
+- compile success
+- retrieval-state counts
+- fallback outcomes
+- schema-repair usage
+- challenge subset tags
+- error taxonomy
+
+## Tests
+
+Run the full suite:
+
+```bash
+pytest -q
+```
+
+Focused suites:
+
+```bash
+pytest -q tests/test_graph_retriever.py tests/test_compiler.py
+pytest -q tests/test_evidence.py tests/test_retrieval_evaluator.py
 ```

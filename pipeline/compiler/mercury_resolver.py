@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .confidence import coerce_confidence
-from .utils import extract_llm_text_content
+from .utils import invoke_json_with_repair
 
 
 FALLBACK_PRIORITY_KEY = "SERVICE_CHANGE"
@@ -69,6 +69,10 @@ class MercuryResolver:
         self.ensure_llm = ensure_llm
         self.llm_getter = llm_getter
         self.min_confidence = float(min_confidence)
+        self.last_resolution_report: Dict[str, Any] = {
+            "source": "deterministic",
+            "repair_used": False,
+        }
 
     def resolve(
         self,
@@ -79,6 +83,7 @@ class MercuryResolver:
         effect: str,
         active_periods: Sequence[Dict[str, Any]],
         informed_entities: Sequence[Dict[str, Any]],
+        high_level_context: Optional[Dict[str, Any]] = None,
     ) -> MercurySelectionResult:
         fallback = self._fallback_result()
         if not self.ensure_llm():
@@ -104,27 +109,62 @@ class MercuryResolver:
             f"EFFECT: {(effect or '').strip()}\n"
             f"ACTIVE_PERIODS: {json.dumps(list(active_periods), ensure_ascii=False)}\n"
             f"INFORMED_ENTITIES: {json.dumps(list(informed_entities), ensure_ascii=False)}\n"
+            f"HIGH_LEVEL_CONTEXT: {json.dumps(high_level_context or {}, ensure_ascii=False)}\n"
             f"CATEGORY_CATALOG: {json.dumps(self.catalog_rows(), ensure_ascii=False)}\n"
         )
 
         try:
-            response = llm.invoke(prompt)
-            content = extract_llm_text_content(response)
-            parsed = self._extract_first_json_object(content)
+            parsed, repair_used = invoke_json_with_repair(
+                llm=llm,
+                prompt=prompt,
+                required_keys=("priority_key", "priority_number", "confidence"),
+                repair_prompt_builder=lambda bad: (
+                    "/no_think\n"
+                    "Repair this Mercury classifier output. Return strict JSON only with "
+                    "priority_key, priority_number, confidence.\n"
+                    f"RAW_OUTPUT:\n{bad}"
+                ),
+            )
         except Exception:
             return fallback
 
         confidence = coerce_confidence(parsed.get("confidence", 0.0))
         if confidence < self.min_confidence:
+            self.last_resolution_report = {
+                "source": "deterministic",
+                "repair_used": False,
+                "confidence": confidence,
+            }
             return fallback
 
         priority_key = self._normalize_priority_key(parsed.get("priority_key"))
         priority_number = self._normalize_priority_number(parsed.get("priority_number"))
 
         if priority_key and priority_key in MERCURY_PRIORITY_BY_KEY:
-            return self._result_for_key(priority_key, confidence)
+            result = self._result_for_key(priority_key, confidence)
+            self.last_resolution_report = {
+                "source": "llm",
+                "repair_used": repair_used,
+                "priority_key": result.priority_key,
+                "priority_number": result.priority_number,
+                "confidence": result.confidence,
+            }
+            return result
         if priority_number and priority_number in MERCURY_KEY_BY_PRIORITY:
-            return self._result_for_key(MERCURY_KEY_BY_PRIORITY[priority_number], confidence)
+            result = self._result_for_key(MERCURY_KEY_BY_PRIORITY[priority_number], confidence)
+            self.last_resolution_report = {
+                "source": "llm",
+                "repair_used": repair_used,
+                "priority_key": result.priority_key,
+                "priority_number": result.priority_number,
+                "confidence": result.confidence,
+            }
+            return result
+        self.last_resolution_report = {
+            "source": "deterministic",
+            "repair_used": repair_used,
+            "confidence": confidence,
+        }
         return fallback
 
     @staticmethod

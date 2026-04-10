@@ -113,6 +113,42 @@ def test_default_mode_uses_llm_cleanup_for_semantic_operator_command_leak():
     assert "Remove only operator/control commands" in llm.prompts[2]
 
 
+def test_default_mode_can_skip_llm_rider_extraction_when_rider_source_is_precomputed():
+    resolver = TextModeResolver()
+    llm = _FakeLLM([
+        (
+            '{"header_text":"These buses are delayed: B: 4, 6, 41, 42.",'
+            '"description_text":"We\'re running as much service as we can with the buses and operators we have available.",'
+            '"confidence":0.89}'
+        ),
+        (
+            '{"header_text":"These buses are delayed: B: 4, 6, 41, 42.",'
+            '"description_text":"We\'re running as much service as we can with the buses and operators we have available."}'
+        ),
+    ])
+
+    header, description = resolver.resolve(
+        llm=llm,
+        instruction=(
+            "These buses are delayed: B: 4, 6, 41, 42. "
+            "We're running as much service as we can with the buses and operators we have available. "
+            "Make the timeframe from now until 5 hours ahead."
+        ),
+        rider_source_override=(
+            "These buses are delayed: B: 4, 6, 41, 42. "
+            "We're running as much service as we can with the buses and operators we have available."
+        ),
+        route_ids=["B4", "B6", "B41", "B42"],
+        cause="UNKNOWN_CAUSE",
+        effect="SIGNIFICANT_DELAYS",
+        text_mode="default",
+    )
+
+    assert header == "These buses are delayed: B: 4, 6, 41, 42."
+    assert description == "We're running as much service as we can with the buses and operators we have available."
+    assert len(llm.prompts) == 2
+
+
 def test_default_mode_retries_on_mid_sentence_split():
     resolver = TextModeResolver()
     llm = _FakeLLM([

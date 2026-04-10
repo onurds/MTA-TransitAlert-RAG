@@ -2328,5 +2328,87 @@
       },
       "tts_description_text": null
     }
+  },
+  {
+    "timestamp_utc": "2026-03-29T20:50:34.269182+00:00",
+    "instruction": "Southbound BxM2 and BxM3 buses are detoured at Madison Ave and E 96th St from 07:15 AM to 09:45 AM today",
+    "llm_provider": "openrouter",
+    "llm_model": "x-ai/grok-4.1-fast",
+    "llm_reasoning_effort": null,
+    "response": {
+      "id": "lmm:generated:3009535fb82d",
+      "active_period": [
+        {
+          "start": "2026-03-29T07:15:00",
+          "end": "2026-03-29T09:45:00"
+        }
+      ],
+      "informed_entity": [
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM2",
+          "mercury_entity_selector": {
+            "sort_order": "MTABC:BXM2:17"
+          }
+        },
+        {
+          "agency_id": "MTABC",
+          "route_id": "BXM3",
+          "mercury_entity_selector": {
+            "sort_order": "MTABC:BXM3:17"
+          }
+        },
+        {
+          "agency_id": "MTABC",
+          "stop_id": "404168"
+        }
+      ],
+      "cause": "UNKNOWN_CAUSE",
+      "effect": "DETOUR",
+      "header_text": {
+        "translation": [
+          {
+            "text": "Southbound [BxM2] and [BxM3] buses are detoured at Madison Ave and E 96th St from 07:15 AM to 09:45 AM today",
+            "language": "en"
+          },
+          {
+            "text": "<p>Southbound [BxM2] and [BxM3] buses are detoured at Madison Ave and E 96th St from 07:15 AM to 09:45 AM today</p>",
+            "language": "en-html"
+          },
+          {
+            "text": "南行 [BxM2] 和 [BxM3] 巴士从今天上午 07:15 到 09:45 在麦迪逊大道和东96街绕行",
+            "language": "zh"
+          },
+          {
+            "text": "Los autobuses [BxM2] y [BxM3] con destino sur se desvían en Madison Ave y E 96th St de 07:15 AM a 09:45 AM hoy",
+            "language": "es"
+          }
+        ]
+      },
+      "description_text": null,
+      "tts_header_text": {
+        "translation": [
+          {
+            "text": "Southbound BxM2 and BxM3 buses are detoured at Madison Avenue and East 96th Street from seven fifteen a m to nine forty-five a m today",
+            "language": "en"
+          }
+        ]
+      },
+      "tts_description_text": null,
+      "mercury_alert": {
+        "created_at": "1774817426",
+        "updated_at": "1774817426",
+        "alert_type": "Planned - Detour",
+        "display_before_active": "3600",
+        "human_readable_active_period": {
+          "translation": [
+            {
+              "text": "Mar 29, Sun 7:15 AM to 9:45 AM",
+              "language": "en"
+            }
+          ]
+        }
+      }
+    }
   }
 ]
