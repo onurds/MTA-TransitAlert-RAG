@@ -18,6 +18,7 @@ Request body:
   "llm_provider": "optional",
   "llm_model": "optional",
   "llm_reasoning_effort": "optional",
+  "reference_time": "optional ISO-8601 evaluation anchor",
   "text_mode": "default"
 }
 ```
@@ -137,6 +138,7 @@ Important entry points:
 - compiler orchestrator: [orchestrator.py](/Users/onurds/Documents/student_NLP1/Conference/MTA-TransitAlert-RAG/pipeline/compiler/orchestrator.py)
 - graph service: [service.py](/Users/onurds/Documents/student_NLP1/Conference/MTA-TransitAlert-RAG/pipeline/graph/service.py)
 - evaluation runner: [eval_api.py](/Users/onurds/Documents/student_NLP1/Conference/MTA-TransitAlert-RAG/scripts/eval_api.py)
+- evaluation package: [evaluation/](/Users/onurds/Documents/student_NLP1/Conference/MTA-TransitAlert-RAG/evaluation)
 - Gradio UI: [gradio_app.py](/Users/onurds/Documents/student_NLP1/Conference/MTA-TransitAlert-RAG/scripts/gradio_app.py)
 
 ## LLM Providers
@@ -198,6 +200,19 @@ Fetch last trace:
 
 ```bash
 curl http://127.0.0.1:8000/debug/last_compile_report
+```
+
+Build the current 400-case evaluation set:
+
+```bash
+python3 scripts/normalize_mta_alerts.py
+python3 scripts/build_eval_dataset.py build
+```
+
+Run evaluation against a live API:
+
+```bash
+python3 scripts/eval_api.py --dataset data/eval_400.jsonl --limit 0
 ```
 
 ## Interactive Testing

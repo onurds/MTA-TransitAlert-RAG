@@ -56,9 +56,11 @@ class MercuryAlert(BaseModel):
 
 class CompileRequest(BaseModel):
     instruction: str = ""
+    request_id: Optional[str] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
     llm_reasoning_effort: Optional[Literal["none", "minimal", "low", "medium", "high", "xhigh"]] = None
+    reference_time: Optional[str] = None
     text_mode: Literal["default", "rewrite"] = "default"
 
 

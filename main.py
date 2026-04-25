@@ -77,6 +77,15 @@ async def last_compile_report():
     return engine.compiler.last_compile_report
 
 
+@app.get("/debug/compile_report/{request_id}")
+async def compile_report_by_request_id(request_id: str):
+    engine: CompileEngine = app.state.engine
+    report = engine.compiler.get_compile_report(request_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"No compile report found for request_id={request_id}")
+    return report
+
+
 @app.post("/compile")
 async def compile_alert(request: CompileRequest):
     engine: CompileEngine = app.state.engine

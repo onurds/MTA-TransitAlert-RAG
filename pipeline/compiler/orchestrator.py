@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
+import threading
+from collections import OrderedDict
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from pipeline.codex_cli_runner import CodexCliInvocationError, CodexCliRunner
 from pipeline.graph import GraphRetriever
-from pipeline.gtfs_rules import UNKNOWN_CAUSE, UNKNOWN_EFFECT, normalize_cause, normalize_effect
+from pipeline.gtfs_rules import CAUSE_ENUMS, EFFECT_ENUMS, UNKNOWN_CAUSE, UNKNOWN_EFFECT, normalize_cause, normalize_effect
 from pipeline.llm_config import build_langchain_chat_model, load_llm_config, with_overrides
 from pipeline.temporal_resolver import TemporalResolver
 
@@ -20,7 +24,7 @@ from .entity_selector import EntitySelector
 from .enum_resolver import EnumResolver
 from .intent_parser import IntentParser
 from .mercury_resolver import MercuryResolver
-from .models import CompileRequest
+from .models import ActivePeriod, CompileRequest
 from .output_builder import OutputBuilder
 from .retrieval_evaluator import RetrievalEvaluator
 from .temporal_selector import TemporalSelector
@@ -83,6 +87,9 @@ class AlertCompiler:
             "text_layout_fallback_used": 0,
         }
         self.last_compile_report: Dict[str, Any] = {"stages": []}
+        self._compile_report_lock = threading.Lock()
+        self._compile_reports_by_request: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+        self._compile_report_limit = 2048
 
         self.intent_parser = IntentParser(
             retriever=self.retriever,
@@ -121,20 +128,17 @@ class AlertCompiler:
             request.llm_reasoning_effort,
         )
         provider = request.llm_provider or self._llm_config_active.provider
-        model = request.llm_model or (
-            self._llm_config_active.openrouter_model_name
-            if provider == "openrouter"
-            else self._llm_config_active.gemini_model_name
-            if provider == "gemini"
-            else self._llm_config_active.local_model_name
-        )
+        model = self._resolve_model_name(provider, request.llm_model)
+        reasoning_effort = self._resolve_reasoning_effort(provider, request.llm_reasoning_effort)
         compile_report: Dict[str, Any] = {
             "provider": provider,
             "model": model,
-            "reasoning_effort": request.llm_reasoning_effort or self._llm_config_active.openrouter_reasoning_effort,
+            "reasoning_effort": reasoning_effort,
             "baseline_config": dict(self.baseline_config),
             "request": {
+                "request_id": request.request_id,
                 "text_mode": request.text_mode,
+                "reference_time": request.reference_time,
             },
             "stages": [],
         }
@@ -143,6 +147,15 @@ class AlertCompiler:
         if not instruction:
             raise ValueError("instruction is required and cannot be empty.")
         compile_report["request"]["instruction_preview"] = instruction[:200]
+
+        if provider == "codex_cli":
+            return self._compile_codex_cli(
+                request=request,
+                instruction=instruction,
+                compile_report=compile_report,
+                model=model,
+                reasoning_effort=reasoning_effort,
+            )
 
         evidence_units = decompose_instruction(instruction)
         evidence_summary = summarize_evidence_units(evidence_units)
@@ -193,7 +206,7 @@ class AlertCompiler:
         temporal_override = bool(intent.temporal_text or has_temporal_hint(instruction))
         temporal_confidence = 0.4
         active_periods: List[Dict[str, Any]] = []
-        reference_dt = datetime.now(self.tz)
+        reference_dt = self._parse_reference_time(request.reference_time)
         compiled_at_posix = int(reference_dt.timestamp())
 
         resolved_periods: List[Dict[str, Any]] = []
@@ -670,10 +683,649 @@ class AlertCompiler:
             "entity_count": len(informed_entities),
             "route_count": len(route_ids_for_text),
         }
-        self.last_compile_report = compile_report
+        self._store_compile_report(request.request_id, compile_report)
         return payload
 
+    def _compile_codex_cli(
+        self,
+        request: CompileRequest,
+        instruction: str,
+        compile_report: Dict[str, Any],
+        model: str,
+        reasoning_effort: str,
+    ) -> Dict[str, Any]:
+        compile_report["backend_mode"] = "codex_hybrid"
+        runner = CodexCliRunner(config=self._llm_config_active, cwd=".")
+
+        evidence_units = decompose_instruction(instruction)
+        evidence_summary = summarize_evidence_units(evidence_units)
+        affected_source_text = evidence_text(evidence_units, ("affected_service", "location_evidence")) or instruction
+        temporal_source_text = evidence_text(evidence_units, ("temporal_directive", "affected_service")) or instruction
+        rider_source_text = command_stripped_instruction(evidence_units) or instruction
+        compile_report["stages"].append({
+            "stage": "evidence_decomposition",
+            "source": "deterministic",
+            "inputs": {"instruction_length": len(instruction)},
+            "outputs": {"evidence_units": evidence_summary},
+            "scores": {"unit_count": len(evidence_units)},
+            "branch_decision": "typed_evidence_units_ready",
+            "details": "Instruction was segmented into typed evidence units before Codex extraction and deterministic grounding.",
+        })
+
+        reference_dt = self._parse_reference_time(request.reference_time)
+        compiled_at_posix = int(reference_dt.timestamp())
+        header_hint = derive_header_from_text(instruction)
+        temporal_override = has_temporal_hint(instruction)
+
+        explicit_route_ids = self.retriever.validate_route_ids(self.intent_parser._extract_explicit_route_ids(instruction))
+        raw_explicit_stop_ids = self.intent_parser._extract_explicit_stop_ids(instruction)
+        explicit_stop_ids = self.retriever.validate_stop_ids(raw_explicit_stop_ids)
+        dropped_explicit = max(0, len(raw_explicit_stop_ids) - len(explicit_stop_ids))
+        if dropped_explicit:
+            self._bump_telemetry("explicit_id_invalid_drop", dropped_explicit)
+
+        explicit_route_entities = [build_route_entity(self.retriever, rid) for rid in explicit_route_ids]
+        explicit_stop_entities = [build_stop_entity(self.retriever, sid) for sid in explicit_stop_ids]
+        seed_entities = dedupe_entities(explicit_route_entities + explicit_stop_entities)
+
+        evidence_location_hints = [u.text for u in evidence_units if u.unit_type == "location_evidence"]
+        affected_hints = [
+            u.text for u in evidence_units if u.unit_type == "location_evidence" and u.source == "affected_service"
+        ] or evidence_location_hints
+        location_hints_override = merge_text_tokens(affected_hints)
+
+        retrieval = self.retriever.retrieve_affected_entities(
+            affected_source_text,
+            seed_entities=seed_entities,
+            route_ids_override=explicit_route_ids or None,
+            location_hints_override=location_hints_override or None,
+            max_stop_candidates=20,
+        )
+        high_level_context = retrieval.get("high_level_context", {}) if isinstance(retrieval, dict) else {}
+        compile_report["stages"].append({
+            "stage": "entity_retrieval",
+            "source": "deterministic",
+            "inputs": {
+                "retrieval_text": affected_source_text,
+                "location_hints_override": location_hints_override,
+                "seed_entities": seed_entities,
+            },
+            "outputs": {
+                "route_ids": retrieval.get("route_ids", []),
+                "location_hints": retrieval.get("location_hints", []),
+                "matched_stop_count": retrieval.get("matched_stop_count", 0),
+                "high_level_context": high_level_context,
+            },
+            "scores": {
+                "route_confidence": retrieval.get("route_confidence", 0.0),
+                "stop_confidence": retrieval.get("stop_confidence", 0.0),
+            },
+            "branch_decision": "graph_grounding_attempted",
+            "details": (
+                f"Graph retrieval produced {len(retrieval.get('informed_entities', [])) if retrieval.get('status') == 'success' else 0} candidate informed entities."
+            ),
+        })
+
+        retrieved_entities = retrieval.get("informed_entities", []) if retrieval.get("status") == "success" else []
+        inferred_route_entities = [e for e in retrieved_entities if e.get("route_id") and not e.get("stop_id")]
+        stop_candidates = retrieval.get("stop_candidates", []) if retrieval.get("status") == "success" else []
+        route_conf = float(retrieval.get("route_confidence", 0.0))
+        stop_conf = float(retrieval.get("stop_confidence", 0.0))
+        if explicit_route_ids:
+            route_conf = max(route_conf, 0.95)
+        if explicit_stop_ids:
+            stop_conf = max(stop_conf, 1.0)
+
+        retrieval_eval = self.retrieval_evaluator.evaluate(
+            retrieval=retrieval,
+            evidence_units=evidence_units,
+            route_confidence=route_conf,
+            stop_confidence=stop_conf,
+            temporal_override=temporal_override,
+        )
+        compile_report["stages"].append({
+            "stage": "retrieval_evaluation",
+            "source": "deterministic",
+            "inputs": {
+                "location_hints": retrieval.get("location_hints", []),
+                "matched_stop_count": retrieval.get("matched_stop_count", 0),
+                "has_stop_intent": retrieval.get("has_stop_intent", False),
+            },
+            "outputs": retrieval_eval.as_dict(),
+            "scores": retrieval_eval.as_dict(),
+            "branch_decision": retrieval_eval.state,
+            "details": "Retrieval branch was chosen from explicit graph-grounding quality signals.",
+        })
+
+        allowed_route_ids = merge_unique_tokens(
+            explicit_route_ids,
+            retrieval.get("route_ids", []),
+            [e.get("route_id") for e in inferred_route_entities if e.get("route_id")],
+        )
+
+        try:
+            core_result = runner.run_json_task(
+                task_name="core_extraction",
+                prompt=self._build_codex_core_prompt(
+                    instruction=instruction,
+                    reference_dt=reference_dt,
+                    evidence_summary=evidence_summary,
+                    allowed_route_ids=allowed_route_ids,
+                    stop_candidates=stop_candidates,
+                    high_level_context=high_level_context,
+                ),
+                schema=self._codex_core_schema(),
+                model=model,
+                reasoning_effort=reasoning_effort,
+            )
+        except CodexCliInvocationError as exc:
+            compile_report["stages"].append({
+                "stage": "codex_core_extraction",
+                "source": "codex_cli",
+                "inputs": {
+                    "allowed_route_ids": allowed_route_ids,
+                    "stop_candidate_count": len(stop_candidates),
+                },
+                "outputs": {"error_category": exc.category},
+                "scores": {},
+                "branch_decision": exc.category,
+                "details": str(exc),
+            })
+            compile_report["telemetry"] = {
+                "backend_mode": "codex_hybrid",
+                "codex_calls": 1,
+                "codex_failure_category": exc.category,
+            }
+            self._store_compile_report(request.request_id, compile_report)
+            raise RuntimeError(f"Codex CLI core_extraction failed ({exc.category}): {exc}") from exc
+
+        core_payload = core_result.payload
+        selected_route_ids = [rid for rid in self._normalize_token_list(core_payload.get("selected_route_ids")) if rid in set(allowed_route_ids)]
+        allowed_stop_ids = {str(c.get("stop_id", "")).strip().upper() for c in stop_candidates if c.get("stop_id")}
+        allowed_stop_ids.update(str(sid).strip().upper() for sid in explicit_stop_ids)
+        selected_stop_ids = [sid for sid in self._normalize_token_list(core_payload.get("selected_stop_ids")) if sid in allowed_stop_ids]
+        active_periods = self._normalize_active_periods(core_payload.get("active_periods"))
+        core_confidence = self._coerce_confidence(core_payload.get("confidence", 0.0))
+        clean_rider_source = str(core_payload.get("clean_rider_source") or "").strip() or rider_source_text
+        cause_out = normalize_cause(str(core_payload.get("cause") or UNKNOWN_CAUSE))
+        effect_out = normalize_effect(str(core_payload.get("effect") or UNKNOWN_EFFECT))
+        mercury_key = str(core_payload.get("mercury_priority_key") or "").strip()
+        mercury_selection = self.mercury_resolver.selection_from_key(mercury_key, core_confidence)
+        compile_report["stages"].append({
+            "stage": "codex_core_extraction",
+            "source": "codex_cli",
+            "inputs": {
+                "allowed_route_ids": allowed_route_ids,
+                "stop_candidate_count": len(stop_candidates),
+                "reference_dt": reference_dt.isoformat(),
+            },
+            "outputs": {
+                "selected_route_ids": selected_route_ids,
+                "selected_stop_ids": selected_stop_ids,
+                "active_periods": active_periods,
+                "cause": cause_out,
+                "effect": effect_out,
+                "mercury_priority_key": mercury_selection.priority_key,
+                "clean_rider_source_length": len(clean_rider_source),
+            },
+            "scores": {"confidence": core_confidence, **core_result.usage.as_dict()},
+            "branch_decision": "codex_structured_extraction",
+            "details": "Codex produced the structured alert interpretation in one bounded extraction call.",
+        })
+
+        route_entities = dedupe_entities(
+            explicit_route_entities + inferred_route_entities + [build_route_entity(self.retriever, rid) for rid in selected_route_ids]
+        )
+        stop_entities = dedupe_entities(explicit_stop_entities + [build_stop_entity(self.retriever, sid) for sid in selected_stop_ids])
+        stop_entities = self.entity_selector.choose_stops_for_single_location(
+            stop_entities=stop_entities,
+            source_text="\n".join([header_hint, affected_source_text]).strip(),
+            stop_candidates=stop_candidates,
+            location_hints=retrieval.get("location_hints", []),
+        )
+        informed_entities = normalize_entities_for_output(
+            dedupe_entities(route_entities + stop_entities),
+            "\n".join([header_hint, affected_source_text]),
+        )
+
+        if selected_route_ids:
+            route_conf = max(route_conf, core_confidence)
+        if selected_stop_ids:
+            stop_conf = max(stop_conf, core_confidence)
+
+        should_try_fallback = (
+            retrieval_eval.state == "CORRECTIVE_FALLBACK"
+            and bool(retrieval.get("has_stop_intent") or retrieval.get("location_hints"))
+        )
+        fallback_attempted = False
+        fallback_used = False
+        fallback_success = False
+        fallback_conf = 0.0
+        fallback_added_count = 0
+        fallback_outcome = "unused"
+        fallback_trigger_reason = retrieval_eval.trigger_reason if should_try_fallback else "not_needed"
+        if should_try_fallback:
+            fallback_attempted = True
+            fallback = self.retriever.geocode_fallback_entities(
+                location_hints=retrieval.get("location_hints", []),
+                route_ids=[str(e["route_id"]) for e in informed_entities if isinstance(e, dict) and e.get("route_id")],
+            )
+            if fallback.get("status") == "success":
+                fallback_success = True
+                fallback_conf = float(fallback.get("confidence", 0.0))
+                fallback_entities = fallback.get("entities", [])
+                if explicit_stop_ids:
+                    locked_stop_ids = {sid.upper() for sid in explicit_stop_ids}
+                    fallback_entities = [
+                        e for e in fallback_entities if str(e.get("stop_id", "")).upper() in locked_stop_ids
+                    ]
+                before_count = len(informed_entities)
+                informed_entities = dedupe_entities(informed_entities + fallback_entities)
+                fallback_added_count = max(0, len(informed_entities) - before_count)
+                if fallback_added_count > 0:
+                    fallback_used = True
+                    fallback_outcome = "accepted"
+                    self._bump_telemetry("fallback_used")
+                    stop_conf = max(stop_conf, fallback_conf)
+                else:
+                    fallback_outcome = "attempted_no_change"
+            else:
+                fallback_outcome = "attempted_no_match"
+        compile_report["stages"].append({
+            "stage": "geocode_fallback",
+            "source": "deterministic",
+            "inputs": {
+                "location_hints": retrieval.get("location_hints", []),
+                "route_ids": [str(e["route_id"]) for e in informed_entities if isinstance(e, dict) and e.get("route_id")],
+            },
+            "outputs": {
+                "fallback_outcome": fallback_outcome,
+                "fallback_added_count": fallback_added_count,
+            },
+            "scores": {"fallback_confidence": fallback_conf},
+            "branch_decision": fallback_trigger_reason,
+            "details": (
+                f"External geocode fallback added {fallback_added_count} new {'entity' if fallback_added_count == 1 else 'entities'} with confidence {fallback_conf:.2f}."
+                if fallback_used
+                else (
+                    "External geocode fallback was attempted but did not change the final entities."
+                    if fallback_attempted
+                    else "External geocode fallback was not needed."
+                )
+            ),
+        })
+        if should_try_fallback and fallback_outcome != "accepted" and not explicit_stop_ids:
+            informed_entities = conservative_entities(informed_entities)
+
+        preserve_stops = should_preserve_stops_under_low_confidence(
+            entities=informed_entities,
+            stop_conf=stop_conf,
+            retrieval=retrieval,
+            fallback_used=fallback_used,
+            fallback_conf=fallback_conf,
+        )
+        if (core_confidence < self.confidence_threshold or retrieval_eval.state == "CORRECTIVE_FALLBACK") and not preserve_stops and not explicit_stop_ids:
+            informed_entities = conservative_entities(informed_entities)
+
+        route_ids_for_text: List[str] = [
+            str(e["route_id"]) for e in informed_entities if isinstance(e, dict) and e.get("route_id")
+        ]
+
+        text_call_count = 0
+        try:
+            text_result = runner.run_json_task(
+                task_name="english_text",
+                prompt=self._build_codex_text_prompt(
+                    instruction=instruction,
+                    clean_rider_source=clean_rider_source,
+                    route_ids=route_ids_for_text,
+                    cause=cause_out,
+                    effect=effect_out,
+                    text_mode=request.text_mode,
+                    header_hint=header_hint if request.text_mode == "rewrite" else None,
+                    high_level_context=high_level_context,
+                ),
+                schema=self._codex_text_schema(),
+                model=model,
+                reasoning_effort=reasoning_effort,
+            )
+            text_call_count = 1
+            header_text = str(text_result.payload.get("header_text") or "").strip()
+            description = str(text_result.payload.get("description_text") or "").strip() or None
+            compile_report["stages"].append({
+                "stage": "codex_english_text",
+                "source": "codex_cli",
+                "inputs": {"route_ids": route_ids_for_text, "text_mode": request.text_mode},
+                "outputs": {"header_text": header_text, "description_text": description},
+                "scores": {"confidence": self._coerce_confidence(text_result.payload.get("confidence", 0.0)), **text_result.usage.as_dict()},
+                "branch_decision": "codex_text_layout",
+                "details": "Codex produced the English header/description pair in a dedicated second call.",
+            })
+        except CodexCliInvocationError as exc:
+            header_text, description = self.text_mode_resolver.resolve(
+                llm=None,
+                instruction=instruction,
+                route_ids=route_ids_for_text,
+                cause=cause_out,
+                effect=effect_out,
+                text_mode=request.text_mode,
+                header_hint=header_hint if request.text_mode == "rewrite" else None,
+                rider_source_override=clean_rider_source,
+                high_level_context=high_level_context,
+            )
+            compile_report["stages"].append({
+                "stage": "codex_english_text",
+                "source": "deterministic",
+                "inputs": {"route_ids": route_ids_for_text, "text_mode": request.text_mode},
+                "outputs": {"error_category": exc.category, "header_text": header_text, "description_text": description},
+                "scores": {},
+                "branch_decision": "deterministic_fallback",
+                "details": f"Codex English text generation failed ({exc.category}); deterministic fallback was used.",
+            })
+
+        header = self.text_renderer.replace_stop_ids_with_names(header_text, informed_entities)
+        header = self.text_renderer.format_route_bullets(header, route_ids_for_text)
+        header = self.text_renderer.collapse_route_parenthetical_duplicates(header)
+        if not header.strip():
+            header = self.text_renderer.format_route_bullets(header_hint, route_ids_for_text)
+        if description:
+            description = self.text_renderer.replace_stop_ids_with_names(description, informed_entities)
+            description = self.text_renderer.format_route_bullets(description, route_ids_for_text)
+            description = self.text_renderer.collapse_route_parenthetical_duplicates(description)
+
+        alert_id = resolve_alert_id(header, description)
+        no_timeframe_mentioned = not temporal_override and not active_periods
+        mercury_alert = self.mercury_resolver.build_mercury_alert(
+            active_periods=active_periods,
+            compiled_at_posix=compiled_at_posix,
+            selection=mercury_selection,
+            no_timeframe_mentioned=no_timeframe_mentioned,
+        )
+        informed_entities = self.mercury_resolver.annotate_entities(
+            informed_entities=informed_entities,
+            priority_number=mercury_selection.priority_number,
+        )
+        compile_report["stages"].append({
+            "stage": "mercury_resolution",
+            "source": "codex_cli",
+            "inputs": {
+                "priority_key": mercury_selection.priority_key,
+                "priority_number": mercury_selection.priority_number,
+            },
+            "outputs": {
+                "alert_type": mercury_selection.alert_type,
+            },
+            "scores": {"confidence": mercury_selection.confidence},
+            "branch_decision": "codex_priority_key",
+            "details": "Codex selected the Mercury priority key and deterministic Mercury builders produced the final alert metadata.",
+        })
+        payload = self.output_builder.build_payload(
+            alert_id=alert_id,
+            active_periods=active_periods,
+            informed_entities=informed_entities,
+            cause=cause_out,
+            effect=effect_out,
+            header_text=header.strip(),
+            description_text=description.strip() if description else None,
+            mercury_alert=mercury_alert,
+        )
+        compile_report["stages"].append({
+            "stage": "payload_building",
+            "source": "deterministic",
+            "inputs": {
+                "alert_id": alert_id,
+                "entity_count": len(informed_entities),
+            },
+            "outputs": {
+                "payload_keys": list(payload.keys()),
+            },
+            "branch_decision": "deterministic_output_builder",
+            "details": "Final payload assembly reused the existing deterministic output builder with English-only model text and deterministic zh/es/TTS fallbacks.",
+        })
+
+        temporal_confidence = 0.98 if active_periods else 0.4
+        confidence = global_confidence(route_conf, stop_conf, temporal_confidence, 1.0)
+        compile_report["telemetry"] = {
+            "backend_mode": "codex_hybrid",
+            "retrieval_state": retrieval_eval.state,
+            "fallback_trigger_reason": fallback_trigger_reason,
+            "fallback_outcome": fallback_outcome,
+            "evidence_units_used": len(evidence_units),
+            "command_strip_applied": clean_rider_source != instruction,
+            "high_level_context_used": any(bool(v) for v in high_level_context.values()) if isinstance(high_level_context, dict) else False,
+            "codex_calls": 1 + text_call_count,
+            "codex_usage": {
+                "core_extraction": core_result.usage.as_dict(),
+                "english_text": text_result.usage.as_dict() if text_call_count else None,
+            },
+        }
+        compile_report["final"] = {
+            "confidence": round(confidence, 3),
+            "route_confidence": round(route_conf, 3),
+            "stop_confidence": round(stop_conf, 3),
+            "temporal_confidence": round(temporal_confidence, 3),
+            "entity_count": len(informed_entities),
+            "route_count": len(route_ids_for_text),
+        }
+        self._store_compile_report(request.request_id, compile_report)
+        return payload
+
+    def _store_compile_report(self, request_id: Optional[str], compile_report: Dict[str, Any]) -> None:
+        with self._compile_report_lock:
+            self.last_compile_report = compile_report
+            if not request_id:
+                return
+            self._compile_reports_by_request[request_id] = compile_report
+            self._compile_reports_by_request.move_to_end(request_id)
+            while len(self._compile_reports_by_request) > self._compile_report_limit:
+                self._compile_reports_by_request.popitem(last=False)
+
+    def get_compile_report(self, request_id: str) -> Optional[Dict[str, Any]]:
+        with self._compile_report_lock:
+            report = self._compile_reports_by_request.get(request_id)
+            if report is not None:
+                self._compile_reports_by_request.move_to_end(request_id)
+            return report
+
+    def _parse_reference_time(self, reference_time: Optional[str]) -> datetime:
+        raw = (reference_time or "").strip()
+        if not raw:
+            return datetime.now(self.tz)
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("reference_time must be an ISO-8601 datetime string.") from exc
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=self.tz)
+        return parsed.astimezone(self.tz)
+
+    def _resolve_model_name(self, provider: str, request_model: Optional[str]) -> str:
+        if request_model:
+            return request_model
+        if provider == "openrouter":
+            return self._llm_config_active.openrouter_model_name
+        if provider == "gemini":
+            return self._llm_config_active.gemini_model_name
+        if provider == "codex_cli":
+            return self._llm_config_active.codex_model_name
+        return self._llm_config_active.local_model_name
+
+    def _resolve_reasoning_effort(self, provider: str, request_reasoning: Optional[str]) -> str:
+        if request_reasoning:
+            return request_reasoning
+        if provider == "codex_cli":
+            return self._llm_config_active.codex_reasoning_effort
+        return self._llm_config_active.openrouter_reasoning_effort
+
+    @staticmethod
+    def _normalize_token_list(values: Any) -> List[str]:
+        if not isinstance(values, list):
+            return []
+        out: List[str] = []
+        seen = set()
+        for value in values:
+            token = str(value or "").strip().upper()
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            out.append(token)
+        return out
+
+    @staticmethod
+    def _normalize_active_periods(values: Any) -> List[Dict[str, Any]]:
+        if not isinstance(values, list):
+            return []
+        periods: List[Dict[str, Any]] = []
+        for row in values:
+            if not isinstance(row, dict):
+                continue
+            try:
+                period = ActivePeriod(**row).model_dump(exclude_none=True)
+            except Exception:
+                continue
+            if period.get("start"):
+                periods.append(period)
+        return periods
+
+    @staticmethod
+    def _coerce_confidence(value: Any) -> float:
+        try:
+            return max(0.0, min(1.0, float(value)))
+        except Exception:
+            return 0.0
+
+    def _build_codex_core_prompt(
+        self,
+        instruction: str,
+        reference_dt: datetime,
+        evidence_summary: Sequence[Dict[str, Any]],
+        allowed_route_ids: Sequence[str],
+        stop_candidates: Sequence[Dict[str, Any]],
+        high_level_context: Dict[str, Any],
+    ) -> str:
+        allowed_stops = [
+            {
+                "stop_id": str(c.get("stop_id", "")).upper(),
+                "route_id": str(c.get("route_id", "")).upper(),
+                "stop_name": str(c.get("stop_name", "")),
+                "score": c.get("score", 0.0),
+            }
+            for c in stop_candidates[:20]
+            if c.get("stop_id")
+        ]
+        return (
+            "You are extracting a structured GTFS transit alert compile result.\n"
+            "Return only JSON matching the provided schema.\n"
+            "Rules:\n"
+            "- selected_route_ids must be chosen only from allowed_route_ids.\n"
+            "- selected_stop_ids must be chosen only from allowed_stop_candidates[].stop_id.\n"
+            "- active_periods must use local ISO timestamps like YYYY-MM-DDTHH:MM:SS.\n"
+            "- cause must be one GTFS cause enum.\n"
+            "- effect must be one GTFS effect enum.\n"
+            "- mercury_priority_key must be one valid Mercury priority key.\n"
+            "- clean_rider_source must remove operator authoring commands while preserving rider-facing facts.\n"
+            "- If a field is unknown, return [] or the UNKNOWN enum.\n\n"
+            f"REFERENCE_LOCAL_TIME: {reference_dt.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"TIMEZONE: {self.tz.key}\n"
+            f"INSTRUCTION: {instruction}\n"
+            f"EVIDENCE_SUMMARY: {json.dumps(list(evidence_summary), ensure_ascii=False)}\n"
+            f"ALLOWED_ROUTE_IDS: {json.dumps(list(allowed_route_ids), ensure_ascii=False)}\n"
+            f"ALLOWED_STOP_CANDIDATES: {json.dumps(allowed_stops, ensure_ascii=False)}\n"
+            f"HIGH_LEVEL_CONTEXT: {json.dumps(high_level_context or {}, ensure_ascii=False)}\n"
+            f"CAUSE_ENUMS: {json.dumps(sorted(CAUSE_ENUMS), ensure_ascii=False)}\n"
+            f"EFFECT_ENUMS: {json.dumps(sorted(EFFECT_ENUMS), ensure_ascii=False)}\n"
+            f"MERCURY_PRIORITY_KEYS: {json.dumps(sorted(row['priority_key'] for row in self.mercury_resolver.catalog_rows()), ensure_ascii=False)}\n"
+        )
+
+    @staticmethod
+    def _codex_core_schema() -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "selected_route_ids": {"type": "array", "items": {"type": "string"}},
+                "selected_stop_ids": {"type": "array", "items": {"type": "string"}},
+                "active_periods": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "start": {"type": "string"},
+                            "end": {"type": ["string", "null"]},
+                        },
+                        "required": ["start", "end"],
+                    },
+                },
+                "cause": {"type": "string"},
+                "effect": {"type": "string"},
+                "mercury_priority_key": {"type": "string"},
+                "clean_rider_source": {"type": "string"},
+                "confidence": {"type": "number"},
+            },
+            "required": [
+                "selected_route_ids",
+                "selected_stop_ids",
+                "active_periods",
+                "cause",
+                "effect",
+                "mercury_priority_key",
+                "clean_rider_source",
+                "confidence",
+            ],
+        }
+
+    def _build_codex_text_prompt(
+        self,
+        instruction: str,
+        clean_rider_source: str,
+        route_ids: Sequence[str],
+        cause: str,
+        effect: str,
+        text_mode: str,
+        header_hint: Optional[str],
+        high_level_context: Dict[str, Any],
+    ) -> str:
+        mode_block = (
+            "Rewrite the alert into a rider-facing header and description while preserving all facts."
+            if text_mode == "rewrite"
+            else "Preserve wording and ordering closely while splitting into rider-facing header and description."
+        )
+        return (
+            "You are laying out English transit alert text into header_text and description_text.\n"
+            "Return only JSON matching the provided schema.\n"
+            "Rules:\n"
+            "- Use clean_rider_source as the source of truth.\n"
+            "- Keep route tokens unchanged.\n"
+            "- Do not invent stops, times, or rider guidance.\n"
+            "- description_text may be empty only if the header contains all rider-facing information.\n"
+            f"- {mode_block}\n\n"
+            f"INSTRUCTION: {instruction}\n"
+            f"CLEAN_RIDER_SOURCE: {clean_rider_source}\n"
+            f"ROUTE_IDS: {json.dumps(list(route_ids), ensure_ascii=False)}\n"
+            f"CAUSE: {cause}\n"
+            f"EFFECT: {effect}\n"
+            f"HEADER_HINT: {header_hint or ''}\n"
+            f"TEXT_MODE: {text_mode}\n"
+            f"HIGH_LEVEL_CONTEXT: {json.dumps(high_level_context or {}, ensure_ascii=False)}\n"
+        )
+
+    @staticmethod
+    def _codex_text_schema() -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "header_text": {"type": "string"},
+                "description_text": {"type": "string"},
+                "confidence": {"type": "number"},
+            },
+            "required": ["header_text", "description_text", "confidence"],
+        }
+
     def _ensure_llm(self) -> bool:
+        if self._llm_config_active.provider == "codex_cli":
+            return False
         if self.llm is not None:
             return True
         try:

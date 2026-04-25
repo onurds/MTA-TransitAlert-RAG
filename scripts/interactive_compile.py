@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--provider",
-        choices=["gemini", "openrouter", "local"],
+        choices=["gemini", "openrouter", "local", "codex_cli"],
         default=None,
         help="Optional provider override sent to /compile.",
     )
@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
         "--reasoning-effort",
         choices=["none", "minimal", "low", "medium", "high", "xhigh"],
         default=None,
-        help="Optional OpenRouter reasoning effort override sent to /compile.",
+        help="Optional reasoning effort override sent to /compile.",
     )
     parser.add_argument(
         "--ask-model",
@@ -103,10 +103,10 @@ def prompt_model_config(default_provider: str | None, default_model: str | None)
     print("\nModel selection (press Enter to keep default).")
     print(f"Current provider: {default_provider or 'server default'}")
     print(f"Current model: {default_model or 'server default'}")
-    provider = input("Provider [gemini/openrouter/local]: ").strip().lower()
+    provider = input("Provider [gemini/openrouter/local/codex_cli]: ").strip().lower()
     model = input("Model name: ").strip()
 
-    provider_out = provider if provider in {"gemini", "openrouter", "local"} else default_provider
+    provider_out = provider if provider in {"gemini", "openrouter", "local", "codex_cli"} else default_provider
     model_out = model if model else default_model
     return provider_out, model_out
 

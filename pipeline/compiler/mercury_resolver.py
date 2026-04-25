@@ -349,6 +349,9 @@ class MercuryResolver:
     def _fallback_result(self) -> MercurySelectionResult:
         return self._result_for_key(FALLBACK_PRIORITY_KEY, 0.0)
 
+    def selection_from_key(self, priority_key: str, confidence: float = 0.0) -> MercurySelectionResult:
+        return self._result_for_key(priority_key, confidence)
+
     def _result_for_key(self, priority_key: str, confidence: float) -> MercurySelectionResult:
         key = self._normalize_priority_key(priority_key) or FALLBACK_PRIORITY_KEY
         return MercurySelectionResult(

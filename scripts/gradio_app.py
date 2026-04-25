@@ -151,6 +151,8 @@ def build_app(args: argparse.Namespace) -> gr.Blocks:
         default_model = runtime_cfg.gemini_model_name
     elif default_provider == "openrouter":
         default_model = runtime_cfg.openrouter_model_name
+    elif default_provider == "codex_cli":
+        default_model = runtime_cfg.codex_model_name
     else:
         default_model = runtime_cfg.local_model_name
 
@@ -158,7 +160,10 @@ def build_app(args: argparse.Namespace) -> gr.Blocks:
     p_state = load_persistent_state()
     initial_provider = p_state.get("provider", "")
     initial_model = p_state.get("model", "")
-    initial_reasoning_effort = p_state.get("reasoning_effort", runtime_cfg.openrouter_reasoning_effort)
+    default_reasoning_effort = (
+        runtime_cfg.codex_reasoning_effort if default_provider == "codex_cli" else runtime_cfg.openrouter_reasoning_effort
+    )
+    initial_reasoning_effort = p_state.get("reasoning_effort", default_reasoning_effort)
 
     # State holds the local compiler reference
     state = {"compiler": None}
@@ -288,7 +293,7 @@ def build_app(args: argparse.Namespace) -> gr.Blocks:
         with gr.Row():
             provider_in = gr.Dropdown(
                 label="Override Provider",
-                choices=["", "gemini", "openrouter", "local"],
+                choices=["", "gemini", "openrouter", "local", "codex_cli"],
                 value=initial_provider,
                 info=f"Default: {default_provider}"
             )
@@ -299,10 +304,10 @@ def build_app(args: argparse.Namespace) -> gr.Blocks:
                 info=f"Default: {default_provider}/{default_model}"
             )
             reasoning_in = gr.Dropdown(
-                label="OpenRouter Reasoning",
+                label="Reasoning Effort",
                 choices=["none", "minimal", "low", "medium", "high", "xhigh"],
                 value=initial_reasoning_effort,
-                info=f"Default: {runtime_cfg.openrouter_reasoning_effort}. Only used for OpenRouter."
+                info=f"OpenRouter default: {runtime_cfg.openrouter_reasoning_effort}. Codex default: {runtime_cfg.codex_reasoning_effort}."
             )
 
         with gr.Row():

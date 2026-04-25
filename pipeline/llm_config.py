@@ -5,6 +5,7 @@ Supported providers:
 - gemini
 - openrouter (OpenAI-compatible endpoint)
 - local (OpenAI-compatible local endpoint, e.g. Ollama, vLLM, mlx-lm)
+- codex_cli (Codex CLI using local ChatGPT/Codex auth)
 
 Default runtime: OpenRouter with model x-ai/grok-4.1-fast and reasoning effort none
 Local default: Ollama at http://localhost:11434/v1 with model qwen3.5:9b
@@ -13,6 +14,7 @@ Local default: Ollama at http://localhost:11434/v1 with model qwen3.5:9b
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -32,6 +34,11 @@ class RuntimeLLMConfig:
     local_base_url: str
     local_model_name: str
     local_disable_thinking: bool
+    codex_cli_bin: str
+    codex_auth_json_path: str
+    codex_cli_home_root: str
+    codex_model_name: str
+    codex_reasoning_effort: str
     llm_timeout_seconds: float
 
 
@@ -60,6 +67,11 @@ def load_llm_config() -> RuntimeLLMConfig:
         local_base_url=os.environ.get("LOCAL_BASE_URL", "http://localhost:11434/v1").strip(),
         local_model_name=os.environ.get("LOCAL_MODEL_NAME", "qwen3-30b-ctx8k").strip(),
         local_disable_thinking=os.environ.get("LOCAL_DISABLE_THINKING", "1").strip() not in ("0", "false", "no"),
+        codex_cli_bin=os.environ.get("CODEX_CLI_BIN", shutil.which("codex") or "codex").strip(),
+        codex_auth_json_path=os.environ.get("CODEX_AUTH_JSON_PATH", "~/.codex/auth.json").strip(),
+        codex_cli_home_root=os.environ.get("CODEX_CLI_HOME_ROOT", "~/.cache/mta-transitalert-codex").strip(),
+        codex_model_name=os.environ.get("CODEX_MODEL_NAME", "gpt-5.4-mini").strip(),
+        codex_reasoning_effort=os.environ.get("CODEX_REASONING_EFFORT", "low").strip().lower(),
         llm_timeout_seconds=float(os.environ.get("LLM_TIMEOUT_SECONDS", "180")),
     )
 
@@ -157,6 +169,8 @@ def with_overrides(
     openrouter_model = base.openrouter_model_name
     openrouter_reasoning_effort = base.openrouter_reasoning_effort
     local_model = base.local_model_name
+    codex_model = base.codex_model_name
+    codex_reasoning_effort = base.codex_reasoning_effort
 
     if model_override:
         if selected_provider == "gemini":
@@ -165,9 +179,13 @@ def with_overrides(
             openrouter_model = model_override
         elif selected_provider == "local":
             local_model = model_override
+        elif selected_provider == "codex_cli":
+            codex_model = model_override
 
     if reasoning_override and selected_provider == "openrouter":
         openrouter_reasoning_effort = reasoning_override
+    elif reasoning_override and selected_provider == "codex_cli":
+        codex_reasoning_effort = reasoning_override
 
     return RuntimeLLMConfig(
         provider=selected_provider,
@@ -180,6 +198,11 @@ def with_overrides(
         local_base_url=base.local_base_url,
         local_model_name=local_model,
         local_disable_thinking=base.local_disable_thinking,
+        codex_cli_bin=base.codex_cli_bin,
+        codex_auth_json_path=base.codex_auth_json_path,
+        codex_cli_home_root=base.codex_cli_home_root,
+        codex_model_name=codex_model,
+        codex_reasoning_effort=codex_reasoning_effort,
         llm_timeout_seconds=base.llm_timeout_seconds,
     )
 
@@ -193,6 +216,8 @@ def current_model_label(config: Optional[RuntimeLLMConfig] = None) -> str:
         return f"openrouter:{config.openrouter_model_name}@{config.openrouter_base_url}"
     if config.provider == "local":
         return f"local:{config.local_model_name}@{config.local_base_url}"
+    if config.provider == "codex_cli":
+        return f"codex_cli:{config.codex_model_name}@{config.codex_cli_bin}"
     return f"{config.provider}:<unsupported>"
 
 
@@ -266,4 +291,9 @@ def build_langchain_chat_model(
             **extra,
         )
 
-    raise ValueError("Unsupported LLM_PROVIDER. Use 'gemini', 'openrouter', or 'local'.")
+    if config.provider == "codex_cli":
+        raise RuntimeError(
+            "codex_cli is not a LangChain chat provider. Use the dedicated Codex CLI compiler path."
+        )
+
+    raise ValueError("Unsupported LLM_PROVIDER. Use 'gemini', 'openrouter', 'local', or 'codex_cli'.")
