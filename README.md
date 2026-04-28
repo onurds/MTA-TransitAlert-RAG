@@ -7,7 +7,9 @@ The system converts free-form operator instructions into schema-valid alert JSON
 ## Runtime Contract
 
 - Main endpoint: `POST /compile`
-- Debug trace endpoint: `GET /debug/last_compile_report`
+- Debug trace endpoints:
+  - `GET /debug/last_compile_report`
+  - `GET /debug/compile_report/{request_id}`
 - Health endpoint: `GET /healthz`
 
 Request body:
@@ -15,6 +17,7 @@ Request body:
 ```json
 {
   "instruction": "Southbound Q52-SBS and Q53-SBS will not stop at stop id 553345. Tomorrow 8pm to 11pm.",
+  "request_id": "optional request-scoped trace id",
   "llm_provider": "optional",
   "llm_model": "optional",
   "llm_reasoning_effort": "optional",
@@ -36,7 +39,7 @@ Stable response fields:
 9. `tts_description_text`
 10. `mercury_alert`
 
-The public `/compile` schema is intentionally stable. Internal diagnostics are exposed through `/debug/last_compile_report` instead of being added to the compile payload.
+The public `/compile` schema is intentionally stable. Internal diagnostics are exposed through the debug trace endpoints instead of being added to the compile payload.
 
 ## Current Methodology
 
@@ -148,6 +151,7 @@ Supported providers:
 - `gemini`
 - `openrouter`
 - `local`
+- `codex_cli`
 
 Key credential files:
 
@@ -202,6 +206,12 @@ Fetch last trace:
 curl http://127.0.0.1:8000/debug/last_compile_report
 ```
 
+Fetch a request-scoped trace:
+
+```bash
+curl http://127.0.0.1:8000/debug/compile_report/<request_id>
+```
+
 Build the current 400-case evaluation set:
 
 ```bash
@@ -253,9 +263,27 @@ python3 scripts/eval_api.py --limit 50
 Useful options:
 
 - `--output-json results/eval.json`
-- `--trace-url http://127.0.0.1:8000/debug/last_compile_report`
+- `--trace-url http://127.0.0.1:8000/debug/compile_report`
 - `--text-mode default`
 - `--shuffle`
+- `--concurrency 5`
+
+Example 100-row Grok run with concurrent requests:
+
+```bash
+python3 scripts/eval_api.py \
+  --url http://127.0.0.1:8000/compile \
+  --dataset data/eval_400.jsonl \
+  --limit 100 \
+  --shuffle \
+  --seed 42 \
+  --concurrency 5 \
+  --text-mode default \
+  --llm-provider openrouter \
+  --llm-model x-ai/grok-4.1-fast \
+  --output-json results/eval_grok_100_c5.json \
+  --tables-dir results/tables_grok_100_c5
+```
 
 The evaluation runner now stores per-example compile traces when a trace endpoint is available and reports:
 

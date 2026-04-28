@@ -75,6 +75,24 @@ def f1(gold: set, pred: set) -> float:
     return 2 * precision * recall / (precision + recall)
 
 
+def recall(gold: set, pred: set) -> float:
+    """Coverage of gold entities by predictions.
+
+    Gold annotations for MTA alerts are lower bounds — operators sometimes
+    omit correct entities, stack multiple alerts, or leave out intermediate
+    corridor stops.  Recall measures whether the system found every
+    gold-labelled entity without penalising it for additional correct
+    predictions that happen to be absent from the gold set.
+    """
+    if not gold and not pred:
+        return 1.0
+    if not gold:
+        return 1.0
+    if not pred:
+        return 0.0
+    return len(gold & pred) / len(gold)
+
+
 def token_set(text: str) -> set:
     cleaned = re.sub(r"[^\w\s]", "", text.lower())
     return set(cleaned.split())

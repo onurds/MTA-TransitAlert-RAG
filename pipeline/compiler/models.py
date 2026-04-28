@@ -75,6 +75,7 @@ class IntentParseResult:
     cause_hint: Optional[str] = None
     style_intent: Optional[str] = None
     parse_confidence: float = 0.0
+    alternative_service_text: Optional[str] = None
 
 
 @dataclass(frozen=True)

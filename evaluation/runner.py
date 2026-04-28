@@ -27,6 +27,7 @@ from .scoring import (
     is_compiled_successfully,
     period_set,
     percentile,
+    recall,
     route_set,
     stop_id_set,
     stop_set,
@@ -129,6 +130,10 @@ def main():
     print(f"Concurrency: {concurrency}")
 
     # Track A — grounding
+    # Primary metric: recall (gold is a lower bound; extra correct predictions are not penalised).
+    # Secondary metric: F1 (reported alongside for completeness).
+    route_recall_scores: List[float] = []
+    stop_recall_scores: List[float] = []
     route_f1_scores: List[float] = []
     stop_f1_scores: List[float] = []
     stop_rows = 0
@@ -241,7 +246,9 @@ def main():
 
             gold_routes = route_set(gold_entities)
             pred_routes = route_set(pred_entities)
+            r_recall = recall(gold_routes, pred_routes)
             r_f1 = f1(gold_routes, pred_routes)
+            route_recall_scores.append(r_recall)
             route_f1_scores.append(r_f1)
 
             gold_stops = stop_id_set(targets.get("gold_stop_ids"))
@@ -250,9 +257,12 @@ def main():
             pred_stops = stop_set(pred_entities)
             if gold_stops:
                 stop_rows += 1
+                s_recall = recall(gold_stops, pred_stops)
                 s_f1 = f1(gold_stops, pred_stops)
+                stop_recall_scores.append(s_recall)
                 stop_f1_scores.append(s_f1)
             else:
+                s_recall = 1.0
                 s_f1 = 1.0
                 if pred_stops:
                     stop_false_positive_count += 1
@@ -326,9 +336,9 @@ def main():
                     mercury_correct_count += 1
                     category_stats["mercury_correct"] += 1
 
-            category_stats["route_f1"].append(r_f1)
+            category_stats["route_f1"].append(r_recall)
             if gold_stops:
-                category_stats["stop_f1"].append(s_f1)
+                category_stats["stop_f1"].append(s_recall)
             if gold_periods and period_ok:
                 category_stats["period_presence_correct"] += 1
             if gold_periods and period_exact_ok:
@@ -336,9 +346,9 @@ def main():
 
             err = categorize_error(
                 http_ok=resp_status == 200,
-                route_f1_val=r_f1,
+                route_f1_val=r_recall,
                 gold_stops=gold_stops,
-                stop_f1_val=s_f1 if gold_stops else 1.0,
+                stop_f1_val=s_recall if gold_stops else 1.0,
                 period_presence_ok=period_ok if gold_periods else True,
                 leakage=leakage,
                 trace=trace,
@@ -350,7 +360,7 @@ def main():
                 overlap_text = f"{overlap:.3f}" if overlap is not None else "N/A"
                 print(
                     f"[{idx}/{total}] {row_id}: ok ({client_ms:.1f} ms) "
-                    f"route_f1={r_f1:.3f} compile={'Y' if compile_ok else 'N'} "
+                    f"route_recall={r_recall:.3f} route_f1={r_f1:.3f} compile={'Y' if compile_ok else 'N'} "
                     f"overlap={overlap_text} leak={'Y' if leakage else 'N'}",
                     flush=True,
                 )
@@ -359,9 +369,11 @@ def main():
                 per_example_results.append({
                     "id": row_id,
                     "request_id": result["request_id"],
+                    "route_recall": r_recall,
                     "route_f1": r_f1,
                     "gold_routes": sorted(gold_routes),
                     "pred_routes": sorted(pred_routes),
+                    "stop_recall": s_recall if gold_stops else None,
                     "stop_f1": s_f1 if gold_stops else None,
                     "gold_stops": sorted(gold_stops),
                     "pred_stops": sorted(pred_stops),
@@ -411,11 +423,13 @@ def main():
     if total > 0:
         print(f"\nCompile rate:           {compile_success_count}/{total} ({compile_success_count/total:.2%})")
 
-    if route_f1_scores:
-        print(f"\nRoute F1 (mean):        {statistics.mean(route_f1_scores):.4f}")
+    if route_recall_scores:
+        print(f"\nRoute Recall (mean):    {statistics.mean(route_recall_scores):.4f}")
+        print(f"Route F1 (mean):        {statistics.mean(route_f1_scores):.4f}  (secondary; penalises extra predictions)")
 
-    if stop_f1_scores:
-        print(f"\nStop F1 (mean):         {statistics.mean(stop_f1_scores):.4f} (over stop-gold subset n={stop_rows})")
+    if stop_recall_scores:
+        print(f"\nStop Recall (mean):     {statistics.mean(stop_recall_scores):.4f} (over stop-gold subset n={stop_rows})")
+        print(f"Stop F1 (mean):         {statistics.mean(stop_f1_scores):.4f}  (secondary; penalises extra predictions)")
     no_gold_stop_rows = total - stop_rows
     if no_gold_stop_rows > 0:
         print(
@@ -455,7 +469,7 @@ def main():
             if cat_total <= 0:
                 continue
             route_mean = statistics.mean(stats["route_f1"]) if stats["route_f1"] else 0.0
-            stop_mean = statistics.mean(stats["stop_f1"]) if stats["stop_f1"] else None
+            stop_mean = statistics.mean(stats["stop_f1"]) if stats["stop_f1"] else None  # holds recall
             overlap_mean = statistics.mean(stats["header_overlap"]) if stats["header_overlap"] else None
             leakage_text = (
                 f"{stats['leakage']}/{stats['has_commands']} ({stats['leakage']/stats['has_commands']:.2%})"
@@ -481,7 +495,7 @@ def main():
             )
             print(
                 f"  Cat {key}: n={cat_total} compile={stats['compile_success']}/{cat_total} "
-                f"route_f1={route_mean:.4f} stop_f1={stop_text} "
+                f"route_recall={route_mean:.4f} stop_recall={stop_text} "
                 f"temporal_presence={temporal_presence_text} temporal_exact={temporal_exact_text} "
                 f"overlap={overlap_text} leakage={leakage_text} mercury={mercury_text}"
             )
@@ -541,8 +555,8 @@ def main():
             {
                 "total": total,
                 "compile_success_count": compile_success_count,
-                "route_f1_scores": route_f1_scores,
-                "stop_f1_scores": stop_f1_scores,
+                "route_f1_scores": route_recall_scores,
+                "stop_f1_scores": stop_recall_scores,
                 "stop_rows": stop_rows,
                 "stop_false_positive_count": stop_false_positive_count,
                 "temporal_rows": temporal_rows,

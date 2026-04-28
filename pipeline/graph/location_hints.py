@@ -161,20 +161,35 @@ class LocationHintMixin:
     def _merge_location_hints(extracted_hints: Sequence[str], override_hints: Optional[Sequence[str]]) -> List[str]:
         merged: List[str] = []
         seen = set()
-        cleaned_inputs = [
-            LocationHintMixin._clean_extracted_location_hint(str(raw or ""))
-            for raw in extracted_hints or []
-        ] + [
-            LocationHintMixin._clean_location_hint(str(raw or ""))
-            for raw in override_hints or []
-        ]
-        for hint in cleaned_inputs:
-            for expanded in LocationHintMixin._expand_location_hint(hint):
+        # Extracted hints (from text) go through _expand_location_hint which applies
+        # the road-marker filter — appropriate for noisy text extraction.
+        for raw in extracted_hints or []:
+            cleaned = LocationHintMixin._clean_extracted_location_hint(str(raw or ""))
+            for expanded in LocationHintMixin._expand_location_hint(cleaned):
                 key = expanded.lower()
                 if key in seen:
                     continue
                 seen.add(key)
                 merged.append(expanded)
+        # Override hints are explicitly provided by the orchestrator (from the LLM's
+        # location_phrases or from GTFS entity IDs) — trust them directly without the
+        # road-marker filter, which rejects valid station names like "Court Sq".
+        # Still apply the "to" split so "X to Y" produces two separate hints.
+        for raw in override_hints or []:
+            cleaned = LocationHintMixin._clean_location_hint(str(raw or ""))
+            if not cleaned:
+                continue
+            if " to " in cleaned.lower():
+                parts = [LocationHintMixin._clean_location_hint(p) for p in re.split(r"\bto\b", cleaned, maxsplit=1, flags=re.IGNORECASE)]
+                candidates = [p for p in parts if p]
+            else:
+                candidates = [cleaned]
+            for candidate in candidates:
+                key = candidate.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(candidate)
         return merged
 
     @staticmethod

@@ -55,6 +55,13 @@ class EntitySelector:
                 }
             )
 
+        corridor_hint = (
+            "\n- CORRIDOR_DETECTED is true: the stop candidates represent a suspended corridor "
+            "between two named stations. Select ALL corridor stop candidates — not just the two "
+            "endpoint stations. The intermediate stops are the affected corridor."
+            if (high_level_context or {}).get("corridor_detected")
+            else ""
+        )
         prompt = (
             "/no_think\n"
             "You are a transit entity selector.\n"
@@ -63,7 +70,12 @@ class EntitySelector:
             "- Select only from allowed IDs.\n"
             "- Keep locked IDs if present.\n"
             "- Do not hallucinate.\n"
-            "- If uncertain return empty arrays.\n\n"
+            "- If uncertain return empty arrays.\n"
+            "- Only select routes and stops from the PRIMARY AFFECTED SERVICE. "
+            "Do NOT select routes or stops that appear only in alternative, shuttle, or replacement "
+            "service context. If a stop or route is mentioned only as 'use X instead', "
+            "'take Y train', or 'board shuttle at Z', exclude it."
+            f"{corridor_hint}\n\n"
             f"Alert text: {text}\n"
             f"Location hints: {list(location_hints)}\n"
             f"Allowed route IDs: {allowed_routes}\n"

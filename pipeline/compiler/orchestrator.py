@@ -292,6 +292,7 @@ class AlertCompiler:
             seed_entities=seed_entities,
             route_ids_override=explicit_route_ids or None,
             location_hints_override=location_hints_override or None,
+            alternative_hints_override=intent.alternative_service_text or None,
             max_stop_candidates=20,
         )
         high_level_context = retrieval.get("high_level_context", {}) if isinstance(retrieval, dict) else {}

@@ -53,6 +53,7 @@ class IntentParser:
                 cause_hint=parsed.cause_hint,
                 style_intent=parsed.style_intent,
                 parse_confidence=max(parsed.parse_confidence, 0.7),
+                alternative_service_text=parsed.alternative_service_text,
             )
 
         self.bump_telemetry("parse_fail", 1)
@@ -71,7 +72,8 @@ class IntentParser:
                 "/no_think\n"
                 "Extract transit intent from operator text. Return strict JSON only with keys:\n"
                 "alert_text, temporal_text, explicit_route_ids, explicit_stop_ids, "
-                "location_phrases, effect_hint, cause_hint, style_intent, parse_confidence.\n"
+                "location_phrases, effect_hint, cause_hint, style_intent, parse_confidence, "
+                "alternative_service_text.\n"
                 "Rules: no prose, no markdown; use null or [] when absent. style_intent='moderate'.\n"
                 "Normalize markdown or emphasized text into plain text before extracting fields.\n"
                 "Expand route-family prefix lists into full route IDs. Example: "
@@ -79,9 +81,11 @@ class IntentParser:
                 "Treat operator authoring directives as control text, not rider text. Examples: "
                 "'timeframe is ...', 'dates will be ...', 'make sure to get it right'. Put the "
                 "underlying time phrase in temporal_text when relevant, and do not echo the directive.\n"
-                "Return clean location_phrases only: concise physical place phrases, no leading "
-                "prepositions, no route names unless they are physical places, and no trailing "
-                "service/meta clauses such as 'no stops will be missed'.\n"
+                "Return clean location_phrases only from the PRIMARY AFFECTED SERVICE: concise physical "
+                "place phrases, no leading prepositions, no route names unless they are physical places, "
+                "and no trailing service/meta clauses. Do NOT include locations from alternative/shuttle/replacement service.\n"
+                "alternative_service_text: the portion of the input describing what riders should do "
+                "INSTEAD (shuttles, transfer routes, replacement service). Return null if none.\n"
                 f"INPUT:\n{instruction}"
             )
         else:
@@ -94,11 +98,16 @@ class IntentParser:
                 "temporal_text (string|null): raw time/recurrence phrase(s).\n"
                 "explicit_route_ids (array of strings): route IDs explicitly present in input.\n"
                 "explicit_stop_ids (array of strings): stop IDs explicitly present in input.\n"
-                "location_phrases (array of strings): clean place phrases that can help stop grounding.\n"
+                "location_phrases (array of strings): clean place phrases from the PRIMARY AFFECTED SERVICE only that can help stop grounding.\n"
                 "effect_hint (string|null): GTFS effect guess if explicit in text.\n"
                 "cause_hint (string|null): GTFS cause guess if explicit in text.\n"
                 "style_intent (string): use 'moderate'.\n"
                 "parse_confidence (number 0..1).\n"
+                "alternative_service_text (string|null): the portion of the input that describes "
+                "alternative, replacement, or shuttle service for riders — i.e., what riders should do "
+                "INSTEAD of the disrupted service. Examples: shuttle bus routes, transfer instructions, "
+                "nearby station recommendations, 'use [route] instead' clauses, 'D/F/N/R trains serve "
+                "the same stops'. Return null if none exists.\n"
                 "Never invent IDs not present in input. Use [] or null when missing.\n\n"
                 "Normalization rules:\n"
                 "- Convert markdown or emphasized text to plain text.\n"
@@ -110,10 +119,10 @@ class IntentParser:
                 "- Do not copy operator authoring directives into alert_text or location_phrases. "
                 "Examples: 'timeframe is ...', 'dates will be ...', 'make sure to get it right'. "
                 "Use their actual time content only in temporal_text when relevant.\n"
-                "- location_phrases must be concise physical locations only, with no leading "
-                "prepositions like 'at', 'on', or 'near', and no trailing rider-guidance clauses.\n"
-                "- Exclude alternative-stop recommendations from location_phrases unless they are "
-                "part of the affected location itself.\n\n"
+                "- location_phrases must be concise physical locations from the PRIMARY AFFECTED SERVICE only, "
+                "with no leading prepositions like 'at', 'on', or 'near', and no trailing rider-guidance clauses.\n"
+                "- Exclude locations from alternative/shuttle/replacement service from location_phrases. "
+                "Those belong in alternative_service_text instead.\n\n"
                 f"Operator input:\n{instruction}"
             )
 
@@ -132,6 +141,7 @@ class IntentParser:
                     "cause_hint",
                     "style_intent",
                     "parse_confidence",
+                    "alternative_service_text",
                 ),
                 repair_prompt_builder=lambda bad: (
                     "/no_think\n"
@@ -160,6 +170,9 @@ class IntentParser:
             cause_hint = str(parsed.get("cause_hint") or "").strip().upper() or None
             style_intent = str(parsed.get("style_intent") or "").strip() or "moderate"
             parse_conf = coerce_confidence(parsed.get("parse_confidence", 0.0))
+            alt_service_text = str(parsed.get("alternative_service_text") or "").strip() or None
+            if alt_service_text and alt_service_text.lower() in {"null", "none"}:
+                alt_service_text = None
 
             if not alert_text and not temporal_text and not route_ids and not stop_ids and not locations:
                 return None
@@ -178,6 +191,7 @@ class IntentParser:
                 cause_hint=cause_hint,
                 style_intent=style_intent,
                 parse_confidence=parse_conf,
+                alternative_service_text=alt_service_text,
             )
         except Exception as e:
             print(f"[DEBUG] Error in _llm_extract_intent: {e}")
