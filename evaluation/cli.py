@@ -32,6 +32,14 @@ def parse_args() -> argparse.Namespace:
         help="Number of concurrent eval requests to run (default: 1).",
     )
     parser.add_argument(
+        "--request-delay",
+        type=float,
+        default=0.5,
+        help="Seconds to wait between submitting successive requests (default: 0.5). "
+             "Staggers top-level alert submissions to avoid provider rate limits without "
+             "affecting the internal LLM calls made per alert.",
+    )
+    parser.add_argument(
         "--progress-every",
         type=int,
         default=1,

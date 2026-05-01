@@ -87,6 +87,12 @@ Each compile run stores a structured stage trace in memory and exposes it throug
 curl http://127.0.0.1:8000/debug/last_compile_report
 ```
 
+For concurrent evaluation or any request-scoped debugging, prefer:
+
+```bash
+curl http://127.0.0.1:8000/debug/compile_report/<request_id>
+```
+
 The trace includes:
 
 - baseline config snapshot
@@ -250,7 +256,7 @@ uvicorn main:app --reload
 python3 scripts/gradio_app.py --mode api --api-url http://127.0.0.1:8000/compile
 ```
 
-The API-backed Stage Report tab uses `/debug/last_compile_report`.
+The API-backed Stage Report tab currently uses `/debug/last_compile_report`. The eval runner uses request-scoped traces via `/debug/compile_report/{request_id}`.
 
 ## Evaluation
 
@@ -267,6 +273,7 @@ Useful options:
 - `--text-mode default`
 - `--shuffle`
 - `--concurrency 5`
+- `--request-delay 0.5`
 
 Example 100-row Grok run with concurrent requests:
 

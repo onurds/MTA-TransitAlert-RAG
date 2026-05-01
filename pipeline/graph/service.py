@@ -57,6 +57,7 @@ class GraphRetriever(
         location_hints_override: Optional[Sequence[str]] = None,
         alternative_hints_override: Optional[str] = None,
         max_stop_candidates: int = 20,
+        effect_hint: Optional[str] = None,
     ) -> Dict[str, Any]:
         text = (alert_text or "").strip()
         if not text:
@@ -212,6 +213,35 @@ class GraphRetriever(
         # corridor stops survive the cap and reach the entity selector.
         effective_max = 40 if corridor_detected else max(1, int(max_stop_candidates))
         stop_candidates = stop_candidates[:effective_max]
+
+        # ── Fix A: namespace isolation ────────────────────────────────────────
+        # When every selected route is a non-bus service (subway / LIRR / MNR),
+        # strip out any bus-namespace stop candidates.  Bus stops enter the
+        # candidate pool because subway suspension alerts describe shuttle buses
+        # in their body text ("Free shuttle buses make stops at…"), but the
+        # affected entities are exclusively subway/commuter-rail stops.
+        # Bus agencies: both NYC Transit local buses and MTA Bus Company express buses.
+        _BUS_AGENCIES = {"MTA NYCT", "MTABC"}
+        _NON_BUS_AGENCIES = {"MTASBWY", "LI", "MNR"}
+        if stop_candidates and route_choices:
+            route_agencies = {c.agency_id for c in route_choices}
+            if route_agencies and route_agencies.issubset(_NON_BUS_AGENCIES):
+                # ── Fix A: namespace isolation ────────────────────────────────
+                # All routes are subway / LIRR / MNR.  Strip bus-namespace stop
+                # candidates that leak in via shuttle bus sentences in descriptions.
+                stop_candidates = [
+                    c for c in stop_candidates if c.get("agency_id") not in _BUS_AGENCIES
+                ]
+
+        # ── Fix B: DETOUR suppression for bus routes ──────────────────────────
+        # Gold annotations for bus detour alerts follow MTA GTFS-RT convention:
+        # only the route entity is emitted, never individual stop entities.
+        # Generating stops for these alerts produces systematic false positives.
+        if stop_candidates and route_choices and effect_hint:
+            route_agencies = {c.agency_id for c in route_choices}
+            if route_agencies and route_agencies.issubset(_BUS_AGENCIES):
+                if effect_hint.strip().upper() in {"DETOUR", "MODIFIED_SERVICE"}:
+                    stop_candidates = []
 
         selected_stop_ids = {str(c.get("stop_id", "")).upper() for c in stop_candidates if c.get("stop_id")}
         matched_stop_entities = [

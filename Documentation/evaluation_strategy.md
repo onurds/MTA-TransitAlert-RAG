@@ -2,7 +2,7 @@
 
 **Project:** Neuro-Symbolic Semantic Compiler for GTFS-Realtime Transit Alert Generation
 **Venue:** 30th International Conference of the Hong Kong Society for Transportation Studies (HKSTS)
-**Last updated:** April 25, 2026
+**Last updated:** April 28, 2026
 
 ---
 
@@ -23,8 +23,9 @@ The core claims are:
 
 | Track | Focus | Key Metrics |
 |---|---|---|
-| **A — Grounding Accuracy** | GTFS entity resolution, temporal resolution | Route F1, Stop F1, temporal accuracy |
+| **A — Grounding Accuracy** | GTFS entity resolution, temporal resolution | Route Recall, Stop Recall, temporal accuracy |
 | **B — Text Quality** | Compile rate, command stripping, header fidelity | Compile rate, command leakage rate, header token overlap |
+| **C — Provider Comparison** | Latency, quality, model heaviness | Compile time (ms), Recall/F1, model tier |
 
 ### Data Source Disclosure
 
@@ -142,16 +143,20 @@ For the injected test set, extend each JSONL entry with:
 
 | Metric | Definition | Target |
 |---|---|---|
-| Route F1 (mean) | Unweighted mean of per-example token-set F1 over `route_id` values | ≥ 0.90 |
+| Route Recall (mean) | Unweighted mean of per-example `\|gold ∩ pred\| / \|gold\|` over `route_id` values | ≥ 0.90 |
+| Route F1 (mean) | Secondary metric — harmonic mean of precision and recall; reported alongside recall | report only |
 
-F1 computation: `TP = |gold ∩ pred|`, `precision = TP/|pred|`, `recall = TP/|gold|`.
+**Rationale for recall as primary:** Gold annotations are lower bounds. MTA operators sometimes stack multiple service alerts into a single instruction. A system that correctly identifies all stacked routes is not wrong for including routes absent from the gold annotation (e.g., E/F co-delay stacked with an M/R express-skip). Recall measures gold coverage without penalising correct extra predictions.
 
 ### Stop Grounding
 
 | Metric | Definition | Target |
 |---|---|---|
-| Stop F1 (mean) | Mean token-set F1 over `stop_id` values, computed only over the stop-gold subset | ≥ 0.80 |
-| Stop false positive rate | % of examples (no gold stops) where system outputs ≥1 stop | report only |
+| Stop Recall (mean) | Mean `\|gold ∩ pred\| / \|gold\|` over `stop_id` values, computed only over the stop-gold subset | ≥ 0.80 |
+| Stop F1 (mean) | Secondary metric — reported alongside recall | report only |
+| Extra stop predictions (gold incomplete) | % of examples (no gold stops) where system outputs ≥1 stop | report only |
+
+**Rationale for recall as primary:** Gold stop sets are incomplete. Intermediate corridor stops and the physical maintenance site may be correct outputs that are absent from gold (e.g., Elmhurst Av as the maintenance site in an express-skip alert). Precision penalties for these cases would mischaracterise system quality.
 
 Stop IDs are normalized before scoring: strip parent-station prefix after `_`, uppercase, and compare only on the stop-gold subset.
 
@@ -236,8 +241,8 @@ For all examples that fail to compile or score below threshold on key metrics, a
 
 | Category | Trigger Condition | Example |
 |---|---|---|
-| **Route grounding failure** | Route F1 = 0 | System outputs no routes, or wrong routes |
-| **Stop grounding failure** | Stop F1 = 0, gold stops exist | Dense-corridor stop not resolved |
+| **Route grounding failure** | Route Recall = 0 | System outputs no routes, or all predicted routes are wrong |
+| **Stop grounding failure** | Stop Recall = 0, gold stops exist | Dense-corridor stop not resolved |
 | **Temporal parse failure** | Active period presence wrong | No period extracted when gold has one |
 | **Command leakage** | Leakage check fires | `"TKT-12345"` appears in output header |
 | **HTTP / schema failure** | Non-200 response or missing required fields | LLM timeout, malformed JSON |
@@ -259,11 +264,11 @@ Run the full 400-case test set under two configurations:
 | **No gating** | 0.00 | 0.00 |
 
 Compare on:
-- Route F1 (mean)
-- Stop F1 (mean, rows with gold stops)
+- Route Recall (mean) + Route F1 (mean)
+- Stop Recall (mean) + Stop F1 (mean, rows with gold stops)
 - Compile rate
 
-**Hypothesis:** No-gating increases compile rate but reduces route/stop F1 because the system returns low-confidence entities that are more likely to be incorrect. The 0.85/0.60 thresholds represent a satisficing point appropriate for a safety-adjacent application.
+**Hypothesis:** No-gating increases compile rate but reduces route/stop recall because the system returns low-confidence entities that are more likely to be incorrect. The 0.85/0.60 thresholds represent a satisficing point appropriate for a safety-adjacent application.
 
 **Paper framing:** One paragraph with a 2-column comparison table. No-gating is the natural baseline; the confidence threshold is the contribution. The ablation validates the threshold choice rather than proposing optimization.
 
@@ -278,15 +283,17 @@ The evaluation runner writes Markdown tables with `--tables-dir`.
 | Metric | Score |
 |---|---|
 | Compile rate | — |
+| Route Recall (mean) | — |
 | Route F1 (mean) | — |
+| Stop Recall (mean) | — |
 | Stop F1 (mean) | — |
-| Stop false positive rate | — |
+| Extra stop predictions (gold incomplete) | — |
 | Temporal presence accuracy | — |
 | Temporal exact match | — |
 
 ### Table 2 — Track B: Text Quality by Injection Category
 
-| Metric | Cat 1 (No cmd) | Cat 2 (Light) | Cat 3 (Heavy) | Overall |
+| Metric | Cat 1 (No cmd) | Cat 2 (Temporal) | Cat 3 (Temporal + distractors) | Overall |
 |---|---|---|---|---|
 | Compile rate | — | — | — | — |
 | Header token overlap | — | — | — | — |
@@ -315,10 +322,16 @@ The evaluation runner writes Markdown tables with `--tables-dir`.
 
 ### Additional Table — Ablation: Confidence Gating
 
-| | Route F1 | Stop F1 | Compile Rate |
-|---|---|---|---|
-| Baseline (threshold = 0.85) | — | — | — |
-| No gating (threshold = 0.00) | — | — | — |
+| | Route Recall | Route F1 | Stop Recall | Stop F1 | Compile Rate |
+|---|---|---|---|---|---|
+| Baseline (threshold = 0.85) | — | — | — | — | — |
+| No gating (threshold = 0.00) | — | — | — | — | — |
+
+### Additional Table — LLM Provider Comparison
+
+| Provider | Model | Tier | Mean Latency (ms) | Route Recall | Stop Recall | Route F1 | Stop F1 |
+|---|---|---|---|---|---|---|---|
+| — | — | — | — | — | — | — | — |
 
 ---
 
@@ -369,6 +382,7 @@ Key CLI flags:
 - `--tables-dir` — directory to write Markdown summary tables
 - `--gold-cause-field` / `--gold-effect-field` — optional JSONL fields for enum accuracy
 - `--llm-provider` / `--llm-model` / `--llm-reasoning-effort` — optional runtime overrides for backend comparison
+- `--concurrency` / `--request-delay` — optional request parallelism and submission staggering for live provider runs
 - `reference_time` is read from each row's `meta.reference_time` and forwarded automatically
 
 Example engineering-comparison runs:
@@ -379,6 +393,8 @@ python3 scripts/eval_api.py \
   --dataset data/eval_400.jsonl \
   --limit 100 \
   --shuffle \
+  --concurrency 5 \
+  --request-delay 0.5 \
   --llm-provider openrouter \
   --llm-model x-ai/grok-4.1-fast
 
@@ -387,6 +403,8 @@ python3 scripts/eval_api.py \
   --dataset data/eval_400.jsonl \
   --limit 100 \
   --shuffle \
+  --concurrency 5 \
+  --request-delay 0.5 \
   --llm-provider codex_cli \
   --llm-model gpt-5.4-mini \
   --llm-reasoning-effort low
@@ -394,13 +412,69 @@ python3 scripts/eval_api.py \
 
 ---
 
-## 9. What Is Not Evaluated
+## 9. LLM Provider Comparison
+
+### Claim
+
+Different LLM backends produce measurably different trade-offs between compile latency, grounding quality, and model cost. This comparison is a paper contribution demonstrating that the architecture is backend-agnostic while quantifying the practical cost of that flexibility.
+
+### Providers Under Comparison
+
+Three providers will be evaluated on the same 400-case eval set:
+
+| Provider | Model | Tier |
+|---|---|---|
+| Provider A | Full-size model | Normal |
+| Provider B | Full-size model | Normal |
+| Provider C | Mini / lightweight model | Mini |
+
+*(Specific model names to be filled in once all three are confirmed.)*
+
+### Dimensions
+
+| Dimension | Metric | Notes |
+|---|---|---|
+| **Latency** | Mean end-to-end compile time (ms), p50, p95 | Measured client-side by the eval runner |
+| **Quality** | Route Recall, Stop Recall, Route F1, Stop F1 | Same scoring as Track A |
+| **Model heaviness** | Mini vs normal model tier | Categorical; annotated per row in the comparison table |
+
+### Run Commands
+
+```bash
+# Provider A — full model
+python3 scripts/eval_api.py \
+  --dataset data/eval_400.jsonl --limit 0 \
+  --llm-provider <provider_a> --llm-model <model_a> \
+  --output-json results/eval_provider_a.json \
+  --tables-dir results/tables_provider_a
+
+# Provider B — full model
+python3 scripts/eval_api.py \
+  --dataset data/eval_400.jsonl --limit 0 \
+  --llm-provider <provider_b> --llm-model <model_b> \
+  --output-json results/eval_provider_b.json \
+  --tables-dir results/tables_provider_b
+
+# Provider C — mini model
+python3 scripts/eval_api.py \
+  --dataset data/eval_400.jsonl --limit 0 \
+  --llm-provider <provider_c> --llm-model <model_c_mini> \
+  --output-json results/eval_provider_c_mini.json \
+  --tables-dir results/tables_provider_c_mini
+```
+
+### Paper Framing
+
+One table comparing all three providers on latency, recall, and F1. One paragraph discussing the quality/latency/cost trade-off. The mini-model row demonstrates that a lightweight backend can approximate full-model quality at lower latency/cost, or characterises where it falls short.
+
+---
+
+## 10. What Is Not Evaluated
 
 The following are explicitly out of scope for this paper:
 
 | Item | Reason |
 |---|---|
-| LLM provider comparison as a paper claim | Implementation detail; not a contribution of the architecture |
 | Fine-tuning / DSPy | Removed from runtime; not part of current system |
 | Mercury station alternatives | Stretch goal; not core contribution |
 | Historical accuracy over time | Requires production deployment |
@@ -409,16 +483,16 @@ The following are explicitly out of scope for this paper:
 
 ---
 
-## 10. Honest Limitations to Disclose
+## 11. Honest Limitations to Disclose
 
 1. **Synthetic inputs:** Evaluation inputs are constructed from published MTA alert texts plus injected commands. Real unconstrained operator inputs may exhibit different failure modes not represented in this test set.
 2. **Synthetic temporal gold:** Temporal accuracy is evaluated only on rows with injected time commands. Gold periods are synthetic and tied to the injected prompt plus a fixed `meta.reference_time`, so this does not yet measure all naturally occurring temporal phrasing found in real operator input.
-3. **Stop coverage:** Stop F1 is computed only on rows with `targets.gold_stop_ids`. These include Mercury station alternatives as gold stop references, but the system is not required to reproduce Mercury station alternatives in the output.
+3. **Stop coverage:** Stop Recall and Stop F1 are computed only on rows with `targets.gold_stop_ids`. These include Mercury station alternatives as gold stop references, but the system is not required to reproduce Mercury station alternatives in the output.
 4. **Confidence threshold:** The 0.85/0.60 thresholds are empirically set, not optimized against a development set. The ablation provides supporting evidence but not a systematic search.
 
 ---
 
-## 11. Evaluation Work Status
+## 12. Evaluation Work Status
 
 This section tracks implementation and analysis status. "Complete" means the dataset/code artifact exists and has passed local validation; it does not necessarily mean that full model results have been produced.
 
@@ -437,13 +511,14 @@ This section tracks implementation and analysis status. "Complete" means the dat
 | Add `codex_cli` backend for low-cost repeated runs | Complete | `pipeline/codex_cli_runner.py` plus compiler integration and eval/UI overrides; smoke-tested with `gpt-5.4-mini` and `gpt-5.4` |
 | Command-injection stress evaluation | Dataset implemented, analysis pending | Full eval must inspect Cat 2/Cat 3 leakage, header overlap, and representative failures |
 | Relative temporal phrase evaluation | Not complete | Current dataset uses deterministic reference anchors, but a dedicated relative-phrase subset is still needed for claims about phrases like "tomorrow 3 PM" |
-| Stop-grounding subset analysis | Not complete | Stop F1 is scored on 60 rows; still need direct-vs-Mercury-station-alternative breakdown if reported |
+| Stop-grounding subset analysis | Not complete | Stop Recall and Stop F1 are scored on 60 rows; still need direct-vs-Mercury-station-alternative breakdown if reported |
 | Mercury alert-type per-category analysis | Not complete | Overall Mercury accuracy is scored; per-category confusion/error summary still needed |
 | Error analysis | Not complete | Requires full-run per-example JSON; summarize route, stop, temporal, enum, Mercury, leakage, fallback, and schema failures |
-| Confidence-gating ablation | Not complete | Run full eval under default thresholds and no-gating thresholds, then compare route F1, stop F1, compile rate, and false positives |
+| Confidence-gating ablation | Not complete | Run full eval under default thresholds and no-gating thresholds, then compare route recall/F1, stop recall/F1, compile rate, and extra stop predictions |
 | Ablation table generation | Not complete | Current table writer does not merge baseline/no-gating result JSON into a comparison table |
 | Rewrite-mode evaluation | Optional / not required for main claim | Only run if rewrite mode is discussed in results; otherwise keep outside the core paper evaluation |
-| LLM provider comparison | Implemented as engineering option, out of scope for the paper | Eval runner can now compare OpenRouter and `codex_cli`, but this is not part of the core research claim |
+| Switch primary grounding metric to recall | Complete | `evaluation/scoring.py` adds `recall()`; runner reports recall as primary, F1 as secondary; rationale: gold is a lower bound |
+| LLM provider comparison | In scope — not yet run | Three providers (full × 2, mini × 1); compare latency, recall, F1; eval runner already supports `--llm-provider` / `--llm-model` overrides |
 | TTS / multilingual quality evaluation | Out of scope | Mentioned as generated output, but not evaluated in this paper |
 | Mercury station-alternative generation | Out of scope | Station alternatives are used as stop gold, not required as generated output |
 | Production/historical accuracy | Out of scope | Requires deployment or longitudinal feed comparison |

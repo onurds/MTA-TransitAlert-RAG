@@ -36,7 +36,9 @@ class RouteResolverMixin:
                 if token in known_route_ids:
                     affected_tokens.add(token)
 
-        numeric_matches = re.findall(r"\b([1-7])\s+trains?\b|\[([1-7])\]", text, flags=re.IGNORECASE)
+        numeric_matches = re.findall(
+            r"\b([1-7])\s+trains?\b|\[([1-7])\]", text, flags=re.IGNORECASE
+        )
         for pair in numeric_matches:
             raw_token = next((p for p in pair if p), "")
             token = self._normalize_route_token(raw_token)
@@ -91,9 +93,22 @@ class RouteResolverMixin:
         tokens: List[str] = []
         src = text or ""
         tokens.extend(self._prefixed_route_list_tokens(src))
+        # Bracket format: [7], [J], [SIR]
         tokens.extend(re.findall(r"\[([A-Za-z0-9\-\+]+)\]", src))
+        # Alphanumeric bus/route codes: B46, M15-SBS, Q58, BX39
         tokens.extend(re.findall(r"\b([A-Za-z]{1,4}\d{1,3}[A-Za-z+\-]*)\b", src))
-        tokens.extend(re.findall(r"\b([A-Za-z]{1,2})\s+trains\b", src, flags=re.IGNORECASE))
+        # "X trains" / "X train" format: "J trains", "F train"
+        tokens.extend(
+            re.findall(r"\b([A-Za-z0-9]{1,3})\s+trains?\b", src, flags=re.IGNORECASE)
+        )
+        # "direction-bound X": "Flushing-bound 7", "Woodlawn-bound 4", "Manhattan-bound J"
+        tokens.extend(re.findall(r"\b[A-Za-z]+-bound\s+([A-Z0-9]{1,3})\b", src))
+        # "no X between/service/trains": "no F between", "no 7 between", "no B service"
+        tokens.extend(re.findall(r"\bno\s+([A-Z0-9]{1,3})\b", src))
+        # "X skips/runs/bypasses": "7 skips", "J skips", "Q runs", "D runs local"
+        tokens.extend(
+            re.findall(r"\b([A-Z0-9]{1,3})\s+(?:skips?|runs?\b|bypasses?)", src)
+        )
         tokens.extend(self.route_alias_matches(src))
         return tokens
 
@@ -109,11 +124,15 @@ class RouteResolverMixin:
                 continue
 
             expanded: List[str] = []
-            for raw_item in re.split(r"\s*,\s*|\s+and\s+|\s*/\s*", raw_list.strip(), flags=re.IGNORECASE):
+            for raw_item in re.split(
+                r"\s*,\s*|\s+and\s+|\s*/\s*", raw_list.strip(), flags=re.IGNORECASE
+            ):
                 item = raw_item.strip()
                 if not item:
                     continue
-                if not re.fullmatch(r"\d{1,3}[A-Za-z]?(?:-SBS|SBS|\+)?", item, flags=re.IGNORECASE):
+                if not re.fullmatch(
+                    r"\d{1,3}[A-Za-z]?(?:-SBS|SBS|\+)?", item, flags=re.IGNORECASE
+                ):
                     continue
                 route_id = self.normalize_route_id(f"{prefix_token}{item}")
                 if route_id in self.route_nodes_by_id:
@@ -123,7 +142,9 @@ class RouteResolverMixin:
                 out.extend(expanded)
         return out
 
-    def _seed_route_entities(self, seed_entities: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    def _seed_route_entities(
+        self, seed_entities: Optional[List[Dict[str, Any]]]
+    ) -> List[Dict[str, Any]]:
         entities: List[Dict[str, Any]] = []
         for e in seed_entities or []:
             if not isinstance(e, dict):
@@ -148,7 +169,8 @@ class RouteResolverMixin:
         seed_agencies = {
             str(e.get("agency_id", "")).strip()
             for e in (seed_entities or [])
-            if isinstance(e, dict) and self._normalize_route_token(str(e.get("route_id", ""))) == route_id
+            if isinstance(e, dict)
+            and self._normalize_route_token(str(e.get("route_id", ""))) == route_id
         }
 
         best: Optional[RouteChoice] = None

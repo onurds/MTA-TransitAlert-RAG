@@ -72,6 +72,27 @@ class GraphIndexMixin:
             agency_id = AGENCY_ID_BY_GTFS_NAMESPACE.get(namespace, "MTA NYCT")
             self.route_agency_by_node[node] = agency_id
 
+            # For commuter-rail routes (LIRR / MNR) there is no short_name, so the
+            # only textual handle is the long_name (e.g. "Harlem", "New Haven",
+            # "Babylon Branch").  Riders commonly say "Harlem Line" or
+            # "New Haven Line", which the plain long_name alias can't cover because
+            # the guardrail rejects single-token phrases and the stop-name guardrail
+            # rejects multi-word phrases that clash with station names.
+            # Generate explicit "X Line" and "X Branch" variants here, where we know
+            # the namespace, to guarantee these route-specific phrases are indexed.
+            if namespace in ("gtfslirr", "gtfsmnr") and long_name:
+                base = long_name.strip()
+                # Strip any existing "Branch" / "Service" suffix before adding our own
+                base_core = re.sub(r"\s+(Branch|Service|Line)$", "", base, flags=re.IGNORECASE).strip()
+                for suffix in (" Line", " Branch"):
+                    alias = base_core + suffix
+                    if alias.lower() != base.lower():  # avoid dup if already ends with that word
+                        self._register_route_phrase_alias(
+                            phrase=alias,
+                            route_id=route_id,
+                            stop_name_phrases=stop_name_phrases,
+                        )
+
         for rid in self.route_nodes_by_id:
             self.route_nodes_by_id[rid].sort()
 
@@ -103,6 +124,7 @@ class GraphIndexMixin:
                 and self._is_route_specific_phrase(primary_norm, route_id)
             ):
                 out.append(primary)
+
         # De-dupe raw forms before normalization.
         deduped: List[str] = []
         seen = set()
@@ -153,6 +175,8 @@ class GraphIndexMixin:
             "sbs",
             "railway",
             "express",
+            # Commuter rail — LIRR uses "Branch" in every route long_name
+            "branch",
         }
         if words & route_cues:
             return True

@@ -121,6 +121,7 @@ def main():
     total = len(dataset)
     trace_url = args.trace_url or infer_trace_url(args.url)
     concurrency = max(1, int(args.concurrency))
+    request_delay = max(0.0, float(args.request_delay))
 
     print(f"Evaluating {total} examples from {args.dataset}")
     print(f"Endpoint: {args.url}")
@@ -128,16 +129,21 @@ def main():
     print(f"Text mode: {args.text_mode}")
     print(f"Timeout per request: {args.timeout:.1f}s")
     print(f"Concurrency: {concurrency}")
+    if request_delay > 0.0:
+        print(f"Request delay: {request_delay:.2f}s between submissions")
 
     # Track A — grounding
     # Primary metric: recall (gold is a lower bound; extra correct predictions are not penalised).
     # Secondary metric: F1 (reported alongside for completeness).
+    # Note: this applies to BOTH routes and stops — gold annotations are incomplete
+    # for stops too (bus detour/delay gold = route-only; subway corridor gold may
+    # omit intermediate stops).  Extra stop predictions are not penalised.
     route_recall_scores: List[float] = []
     stop_recall_scores: List[float] = []
     route_f1_scores: List[float] = []
     stop_f1_scores: List[float] = []
     stop_rows = 0
-    stop_false_positive_count = 0
+    stop_extra_predictions_count = 0  # rows where pred_stops non-empty but gold_stops empty
     temporal_rows = 0
     period_presence_correct = 0
     period_exact_correct = 0
@@ -181,10 +187,11 @@ def main():
 
     indexed_dataset = list(enumerate(dataset, start=1))
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        future_map = {
-            executor.submit(_evaluate_one, idx, row, args, trace_url, total): (idx, row)
-            for idx, row in indexed_dataset
-        }
+        future_map: Dict[Any, Any] = {}
+        for i, (idx, row) in enumerate(indexed_dataset):
+            if request_delay > 0.0 and i > 0:
+                time.sleep(request_delay)
+            future_map[executor.submit(_evaluate_one, idx, row, args, trace_url, total)] = (idx, row)
         for future in as_completed(future_map):
             result = future.result()
             completed += 1
@@ -262,10 +269,13 @@ def main():
                 stop_recall_scores.append(s_recall)
                 stop_f1_scores.append(s_f1)
             else:
+                # No gold stops — gold annotations are a lower bound; extra stop
+                # predictions may be correct but unannotated.  Treat as perfect
+                # recall (same policy as routes) and track separately for info.
                 s_recall = 1.0
                 s_f1 = 1.0
                 if pred_stops:
-                    stop_false_positive_count += 1
+                    stop_extra_predictions_count += 1
 
             period_ok = True
             period_exact_ok = None
@@ -336,9 +346,9 @@ def main():
                     mercury_correct_count += 1
                     category_stats["mercury_correct"] += 1
 
-            category_stats["route_f1"].append(r_recall)
+            category_stats["route_recall"].append(r_recall)
             if gold_stops:
-                category_stats["stop_f1"].append(s_recall)
+                category_stats["stop_recall"].append(s_recall)
             if gold_periods and period_ok:
                 category_stats["period_presence_correct"] += 1
             if gold_periods and period_exact_ok:
@@ -433,8 +443,9 @@ def main():
     no_gold_stop_rows = total - stop_rows
     if no_gold_stop_rows > 0:
         print(
-            f"Stop false positives:   {stop_false_positive_count}/{no_gold_stop_rows} "
-            f"({stop_false_positive_count/no_gold_stop_rows:.2%}) (rows without gold stops)"
+            f"Extra stop predictions: {stop_extra_predictions_count}/{no_gold_stop_rows} "
+            f"({stop_extra_predictions_count/no_gold_stop_rows:.2%}) "
+            f"(rows without gold stops; gold is incomplete — not penalised)"
         )
 
     if temporal_rows > 0:
@@ -468,8 +479,8 @@ def main():
             cat_total = stats["total"]
             if cat_total <= 0:
                 continue
-            route_mean = statistics.mean(stats["route_f1"]) if stats["route_f1"] else 0.0
-            stop_mean = statistics.mean(stats["stop_f1"]) if stats["stop_f1"] else None  # holds recall
+            route_mean = statistics.mean(stats["route_recall"]) if stats["route_recall"] else 0.0
+            stop_mean = statistics.mean(stats["stop_recall"]) if stats["stop_recall"] else None
             overlap_mean = statistics.mean(stats["header_overlap"]) if stats["header_overlap"] else None
             leakage_text = (
                 f"{stats['leakage']}/{stats['has_commands']} ({stats['leakage']/stats['has_commands']:.2%})"
@@ -555,10 +566,12 @@ def main():
             {
                 "total": total,
                 "compile_success_count": compile_success_count,
-                "route_f1_scores": route_recall_scores,
-                "stop_f1_scores": stop_recall_scores,
+                "route_recall_scores": route_recall_scores,
+                "route_f1_scores": route_f1_scores,
+                "stop_recall_scores": stop_recall_scores,
+                "stop_f1_scores": stop_f1_scores,
                 "stop_rows": stop_rows,
-                "stop_false_positive_count": stop_false_positive_count,
+                "stop_extra_predictions_count": stop_extra_predictions_count,
                 "temporal_rows": temporal_rows,
                 "period_presence_correct": period_presence_correct,
                 "period_exact_correct": period_exact_correct,

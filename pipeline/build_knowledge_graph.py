@@ -10,8 +10,9 @@ OUTPUT_GRAPH_FILE = 'data/mta_knowledge_graph.gpickle'
 
 # The directories to process
 AGENCY_DIRS = [
-    'gtfs_b', 'gtfs_busco', 'gtfs_bx', 'gtfs_m', 
-    'gtfs_q', 'gtfs_si', 'gtfs_subway'
+    'gtfs_b', 'gtfs_busco', 'gtfs_bx', 'gtfs_m',
+    'gtfs_q', 'gtfs_si', 'gtfs_subway',
+    'gtfslirr', 'gtfsmnr',
 ]
 
 def load_gtfs_files():

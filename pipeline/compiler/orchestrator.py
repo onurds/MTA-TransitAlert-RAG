@@ -294,6 +294,7 @@ class AlertCompiler:
             location_hints_override=location_hints_override or None,
             alternative_hints_override=intent.alternative_service_text or None,
             max_stop_candidates=20,
+            effect_hint=intent.effect_hint or None,
         )
         high_level_context = retrieval.get("high_level_context", {}) if isinstance(retrieval, dict) else {}
         compile_report["stages"].append({

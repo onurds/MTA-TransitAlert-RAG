@@ -12,6 +12,9 @@ AGENCY_ID_BY_GTFS_NAMESPACE = {
     "gtfs_m": "MTA NYCT",
     "gtfs_q": "MTA NYCT",
     "gtfs_si": "MTA NYCT",
+    # Commuter rail
+    "gtfslirr": "LI",
+    "gtfsmnr": "MNR",
 }
 
 ALT_LINE_MARKERS = (
@@ -37,6 +40,8 @@ AFFECTED_LINE_MARKERS = (
     "suspended",
     "delays",
     "running with delays",
+    # "between X and Y" is a corridor reference — always affected-service context
+    " between ",
 )
 
 LOCATION_PATTERNS = [
