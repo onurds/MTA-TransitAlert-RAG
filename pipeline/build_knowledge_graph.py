@@ -1,22 +1,29 @@
 import os
-import pandas as pd
-import networkx as nx
 import pickle
+from collections import defaultdict
 
-# Base directory containing the GTFS folders (relative to project root)
-GTFS_BASE_DIR = 'MTA_GTFS'
-# Output path for the serialized graph (relative to project root)
-OUTPUT_GRAPH_FILE = 'data/mta_knowledge_graph.gpickle'
+import networkx as nx
+import pandas as pd
 
-# The directories to process
+
+GTFS_BASE_DIR = "MTA_GTFS"
+OUTPUT_GRAPH_FILE = "data/mta_knowledge_graph.gpickle"
+
 AGENCY_DIRS = [
-    'gtfs_b', 'gtfs_busco', 'gtfs_bx', 'gtfs_m',
-    'gtfs_q', 'gtfs_si', 'gtfs_subway',
-    'gtfslirr', 'gtfsmnr',
+    "gtfs_b",
+    "gtfs_busco",
+    "gtfs_bx",
+    "gtfs_m",
+    "gtfs_q",
+    "gtfs_si",
+    "gtfs_subway",
+    "gtfslirr",
+    "gtfsmnr",
 ]
 
+
 def load_gtfs_files():
-    """Loads stops, routes, trips, and stop_times from all agencies, resolving ID collisions."""
+    """Load stops, routes, trips, and stop_times from all agencies with unique IDs."""
     all_stops = []
     all_routes = []
     all_trips = []
@@ -25,153 +32,202 @@ def load_gtfs_files():
     for agency in AGENCY_DIRS:
         print(f"Loading data for {agency}...")
         agency_path = os.path.join(GTFS_BASE_DIR, agency)
-        
-        # Load Stops
-        stops_file = os.path.join(agency_path, 'stops.txt')
+
+        stops_file = os.path.join(agency_path, "stops.txt")
         if os.path.exists(stops_file):
-            # Use dtype=str to avoid type inference issues with IDs that look like numbers
             stops_df = pd.read_csv(stops_file, dtype=str)
-            # Prefix the stop_id to ensure uniqueness across boroughs
-            # While MTABC and NYCT share some stops, prefixing guarantees no namespace collisions
-            stops_df['stop_id_unique'] = agency + '_' + stops_df['stop_id']
-            stops_df['agency'] = agency
+            stops_df["stop_id_unique"] = agency + "_" + stops_df["stop_id"]
+            stops_df["agency"] = agency
             all_stops.append(stops_df)
 
-        # Load Routes
-        routes_file = os.path.join(agency_path, 'routes.txt')
+        routes_file = os.path.join(agency_path, "routes.txt")
         if os.path.exists(routes_file):
             routes_df = pd.read_csv(routes_file, dtype=str)
-            # Route IDs are usually unique (e.g. B1, Q6, A), but prefixing just in case
-            routes_df['route_id_unique'] = agency + '_' + routes_df['route_id']
-            routes_df['agency'] = agency
+            routes_df["route_id_unique"] = agency + "_" + routes_df["route_id"]
+            routes_df["agency"] = agency
             all_routes.append(routes_df)
 
-        # Load Trips
-        trips_file = os.path.join(agency_path, 'trips.txt')
+        trips_file = os.path.join(agency_path, "trips.txt")
         if os.path.exists(trips_file):
             trips_df = pd.read_csv(trips_file, dtype=str)
-            trips_df['trip_id_unique'] = agency + '_' + trips_df['trip_id']
-            trips_df['route_id_unique'] = agency + '_' + trips_df['route_id']
-            trips_df['agency'] = agency
+            trips_df["trip_id_unique"] = agency + "_" + trips_df["trip_id"]
+            trips_df["route_id_unique"] = agency + "_" + trips_df["route_id"]
+            trips_df["agency"] = agency
             all_trips.append(trips_df)
 
-        # Load Stop Times
-        stop_times_file = os.path.join(agency_path, 'stop_times.txt')
+        stop_times_file = os.path.join(agency_path, "stop_times.txt")
         if os.path.exists(stop_times_file):
-            # We only need trip_id, stop_id, and stop_sequence for the graph structure
-            st_df = pd.read_csv(stop_times_file, usecols=['trip_id', 'stop_id', 'stop_sequence'], dtype=str)
-            st_df['trip_id_unique'] = agency + '_' + st_df['trip_id']
-            st_df['stop_id_unique'] = agency + '_' + st_df['stop_id']
-            # Ensure stop_sequence is numeric for sorting
-            st_df['stop_sequence'] = pd.to_numeric(st_df['stop_sequence'])
-            st_df['agency'] = agency
+            st_df = pd.read_csv(
+                stop_times_file,
+                usecols=["trip_id", "stop_id", "stop_sequence"],
+                dtype=str,
+            )
+            st_df["trip_id_unique"] = agency + "_" + st_df["trip_id"]
+            st_df["stop_id_unique"] = agency + "_" + st_df["stop_id"]
+            st_df["stop_sequence"] = pd.to_numeric(st_df["stop_sequence"])
+            st_df["agency"] = agency
             all_stop_times.append(st_df)
 
     print("Concatenating DataFrames...")
-    # Concatenate all dataframes, filling missing columns (like zone_id for subway) with NaN
     stops = pd.concat(all_stops, ignore_index=True) if all_stops else pd.DataFrame()
     routes = pd.concat(all_routes, ignore_index=True) if all_routes else pd.DataFrame()
     trips = pd.concat(all_trips, ignore_index=True) if all_trips else pd.DataFrame()
     stop_times = pd.concat(all_stop_times, ignore_index=True) if all_stop_times else pd.DataFrame()
-
     return stops, routes, trips, stop_times
 
+
+def to_public_stop_id(stop_node_or_id: str) -> str:
+    value = str(stop_node_or_id or "").strip().upper()
+    return value.split("_")[-1] if "_" in value else value
+
+
+def to_station_stop_id(stop_node_or_id: str) -> str:
+    value = to_public_stop_id(stop_node_or_id)
+    if value and value[-1] in {"N", "S"} and any(ch.isdigit() for ch in value):
+        return value[:-1]
+    return value
+
+
+def build_route_patterns(merged_st: pd.DataFrame) -> dict[str, list[dict]]:
+    """Attach representative trip patterns to each route node.
+
+    Patterns preserve directional stop-node sequences while also storing
+    normalized public stop IDs. This lets runtime retrieval choose the corridor
+    sequence that best matches a header-level endpoint pair.
+    """
+    print("Building route pattern metadata...")
+    pattern_counter: dict[tuple[str, tuple[str, ...]], dict] = {}
+
+    merged_sorted = merged_st.sort_values(by=["trip_id_unique", "stop_sequence"])
+    for trip_id, trip_rows in merged_sorted.groupby("trip_id_unique", sort=False):
+        if trip_rows.empty:
+            continue
+        route_id_unique = str(trip_rows["route_id_unique"].iloc[0])
+        direction_id = str(trip_rows["direction_id"].iloc[0] or "")
+        headsign = str(trip_rows["trip_headsign"].iloc[0] or "")
+        stop_nodes = tuple(str(stop_id) for stop_id in trip_rows["stop_id_unique"].tolist())
+        public_stop_ids = tuple(to_station_stop_id(stop_id) for stop_id in stop_nodes)
+        if len(stop_nodes) < 2:
+            continue
+
+        key = (route_id_unique, stop_nodes)
+        row = pattern_counter.get(key)
+        if row is None:
+            pattern_counter[key] = {
+                "route_id_unique": route_id_unique,
+                "direction_id": direction_id,
+                "headsign": headsign,
+                "count": 1,
+                "stop_nodes": stop_nodes,
+                "public_stop_ids": public_stop_ids,
+            }
+        else:
+            row["count"] += 1
+
+    patterns_by_route: dict[str, list[dict]] = defaultdict(list)
+    for route_id_unique, rows in defaultdict(list, {}).items():
+        patterns_by_route[route_id_unique] = rows
+
+    for row in pattern_counter.values():
+        patterns_by_route[row["route_id_unique"]].append(row)
+
+    for route_id_unique, patterns in patterns_by_route.items():
+        patterns.sort(
+            key=lambda row: (int(row["count"]), len(row["stop_nodes"])),
+            reverse=True,
+        )
+        for idx, row in enumerate(patterns, start=1):
+            row["pattern_id"] = f"{route_id_unique}:p{idx}"
+
+    return patterns_by_route
+
+
 def build_graph(stops, routes, trips, stop_times):
-    """Builds a directed NetworkX graph connecting routes to stops and stops to subsequent stops."""
+    """Build a directed graph with route, stop, and stop-sequence metadata."""
     print("Initializing Graph...")
-    G = nx.DiGraph()
+    graph = nx.DiGraph()
 
     print("Adding Stop Nodes...")
-    # Add Stop Nodes
-    # Using specific columns rather than to_dict('records') to avoid bloating memory with NaN columns
     for _, row in stops.iterrows():
-        G.add_node(
-            row['stop_id_unique'], 
-            type='Stop',
-            name=row.get('stop_name', ''),
-            lat=row.get('stop_lat', ''),
-            lon=row.get('stop_lon', ''),
-            agency=row['agency']
+        graph.add_node(
+            row["stop_id_unique"],
+            type="Stop",
+            name=row.get("stop_name", ""),
+            lat=row.get("stop_lat", ""),
+            lon=row.get("stop_lon", ""),
+            agency=row["agency"],
         )
 
+    merged_st = pd.merge(
+        stop_times,
+        trips[
+            [
+                "trip_id_unique",
+                "route_id_unique",
+                "direction_id",
+                "trip_headsign",
+            ]
+        ],
+        on="trip_id_unique",
+        how="left",
+    )
+    route_patterns_by_route = build_route_patterns(merged_st)
+
     print("Adding Route Nodes...")
-    # Add Route Nodes
     for _, row in routes.iterrows():
-        G.add_node(
-            row['route_id_unique'],
-            type='Route',
-            short_name=row.get('route_short_name', ''),
-            long_name=row.get('route_long_name', ''),
-            agency=row['agency']
+        graph.add_node(
+            row["route_id_unique"],
+            type="Route",
+            short_name=row.get("route_short_name", ""),
+            long_name=row.get("route_long_name", ""),
+            agency=row["agency"],
+            stop_patterns=route_patterns_by_route.get(row["route_id_unique"], []),
         )
 
     print("Creating Serves and Next_Stop Edges...")
-    
-    # Mapping trips to routes is necessary because stop_times only links to trip_id
-    # We join stop_times with trips on trip_id_unique to get the route_id_unique for every stop visit
-    merged_st = pd.merge(
-        stop_times, 
-        trips[['trip_id_unique', 'route_id_unique']], 
-        on='trip_id_unique', 
-        how='left'
-    )
+    serves_relations = merged_st[["route_id_unique", "stop_id_unique"]].drop_duplicates()
 
-    # 1. 'Serves' Edges (Route -> Stop)
-    # We want a unique edge if a Route serves a Stop. 
-    # Drop duplicates on route_id_unique and stop_id_unique
-    serves_relations = merged_st[['route_id_unique', 'stop_id_unique']].drop_duplicates()
-    
     serves_edges = []
     for _, row in serves_relations.iterrows():
-        route = row['route_id_unique']
-        stop = row['stop_id_unique']
-        # Route -> Stop
-        serves_edges.append((route, stop, {'type': 'Serves'}))
-        # Optional: Stop -> Route (if we want undirected behavior for 'Serves', but we use DiGraph)
-        serves_edges.append((stop, route, {'type': 'Served_By'}))
-    
-    G.add_edges_from(serves_edges)
+        route = row["route_id_unique"]
+        stop = row["stop_id_unique"]
+        serves_edges.append((route, stop, {"type": "Serves"}))
+        serves_edges.append((stop, route, {"type": "Served_By"}))
+    graph.add_edges_from(serves_edges)
 
-    # 2. 'Next_Stop' Edges (Stop -> Stop)
-    # Sort stop_times by trip and sequence to guarantee consecutive stops are ordered
-    merged_st = merged_st.sort_values(by=['trip_id_unique', 'stop_sequence'])
-    
-    # We shift the dataframe to compare current row with next row
-    merged_st['next_trip'] = merged_st['trip_id_unique'].shift(-1)
-    merged_st['next_stop'] = merged_st['stop_id_unique'].shift(-1)
-    
-    # Keep only rows where the next row belongs to the SAME trip
-    valid_transitions = merged_st[merged_st['trip_id_unique'] == merged_st['next_trip']]
-    
-    # We drop duplicates to avoid adding thousands of parallel identical edges
-    unique_transitions = valid_transitions[['stop_id_unique', 'next_stop']].drop_duplicates()
-    
+    merged_st = merged_st.sort_values(by=["trip_id_unique", "stop_sequence"])
+    merged_st["next_trip"] = merged_st["trip_id_unique"].shift(-1)
+    merged_st["next_stop"] = merged_st["stop_id_unique"].shift(-1)
+    valid_transitions = merged_st[merged_st["trip_id_unique"] == merged_st["next_trip"]]
+    unique_transitions = valid_transitions[["stop_id_unique", "next_stop"]].drop_duplicates()
+
     next_stop_edges = []
     for _, row in unique_transitions.iterrows():
-        current_stop = row['stop_id_unique']
-        next_stop = row['next_stop']
-        next_stop_edges.append((current_stop, next_stop, {'type': 'Next_Stop'}))
-        
-    G.add_edges_from(next_stop_edges)
+        next_stop_edges.append(
+            (row["stop_id_unique"], row["next_stop"], {"type": "Next_Stop"})
+        )
+    graph.add_edges_from(next_stop_edges)
+    return graph
 
-    return G
 
 def main():
     print("Starting GTFS Knowledge Graph Construction Pipeline...")
     stops, routes, trips, stop_times = load_gtfs_files()
-    
-    print(f"Loaded {len(stops)} stops, {len(routes)} routes, {len(trips)} trips, and {len(stop_times)} stop times.")
-    
-    G = build_graph(stops, routes, trips, stop_times)
-    
+    print(
+        f"Loaded {len(stops)} stops, {len(routes)} routes, "
+        f"{len(trips)} trips, and {len(stop_times)} stop times."
+    )
+
+    graph = build_graph(stops, routes, trips, stop_times)
     print("\nGraph Construction Complete!")
-    print(f"Total Nodes: {G.number_of_nodes()}")
-    print(f"Total Edges: {G.number_of_edges()}")
-    
+    print(f"Total Nodes: {graph.number_of_nodes()}")
+    print(f"Total Edges: {graph.number_of_edges()}")
+
     print(f"\nSaving graph to {OUTPUT_GRAPH_FILE}...")
-    with open(OUTPUT_GRAPH_FILE, 'wb') as f:
-        pickle.dump(G, f)
+    with open(OUTPUT_GRAPH_FILE, "wb") as f:
+        pickle.dump(graph, f)
     print("Success!")
+
 
 if __name__ == "__main__":
     main()

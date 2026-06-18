@@ -16,7 +16,7 @@ The core claims are:
 
 1. **Grounding accuracy:** Routes and stops are correctly resolved to GTFS IDs from free-text operator input.
 2. **Temporal accuracy:** Relative and absolute date/time phrases are correctly parsed to ISO-8601 active periods.
-3. **Command stripping:** Operator authoring commands (timeframe directives, ticket numbers, map links, quality instructions) are removed from rider-facing output without losing content.
+3. **Command stripping:** Operator authoring commands (timeframe directives, quality instructions, and formatting instructions) are removed from rider-facing output without losing content.
 4. **Header fidelity:** In default text mode, the output header preserves the operator's intent with high token overlap.
 
 ### Two Evaluation Tracks
@@ -70,17 +70,19 @@ Input = verbatim `inputs.header` + `inputs.description`.
 Purpose: baseline grounding accuracy on clean, well-formed text.
 
 **Category 2 — Temporal Injection (160 cases)**
-Inject a deterministic time command plus a lightweight internal artifact:
+Inject a deterministic time command:
 - Timeframe directive from a fixed pool such as `"Timeframe is today from 6 PM to 9 PM."` or `"Timeframe is tomorrow from 7 AM to 10 AM."`
-- Internal ticket string: `"TKT-XXXXX."`
 
 These rows carry synthetic temporal gold in `targets.temporal_gold_periods`.
 
 **Category 3 — Temporal Injection + Distractors (120 cases)**
 Inject the same deterministic temporal command structure as Category 2, plus distraction commands:
-- Map/attachment hint: `"See attached map."`
 - Quality instruction: `"Make sure to get it right."`
-- Formatting instruction: `"Use this as the header."`
+- Date-format instruction: `"Make the dates match the timeframe above."`
+- Route-preservation instruction: `"Do not rewrite the route names."`
+- Fidelity instruction: `"Do not change or rephrase the wording."`
+- Length instruction: `"Command: Abbreviate the timeframe on header a bit."`
+- Salience instruction: `"Rule: Make sure to write the first sentence as is."`
 
 These rows also carry synthetic temporal gold in `targets.temporal_gold_periods`.
 
@@ -100,7 +102,15 @@ For the injected test set, extend each JSONL entry with:
     "temporal_gold_periods": [...],
     "gold_stop_ids": ["710", "711"],
     "mercury_alert_type": "Planned - Part Suspended",
-    "commands_to_strip": ["TKT-12345", "See a map of this stop change", "Make sure to get it right"]
+    "commands_to_strip": [
+      "Timeframe is today from 6 PM to 9 PM.",
+      "Make sure to get it right.",
+      "Make the dates match the timeframe above.",
+      "Do not rewrite the route names.",
+      "Do not change or rephrase the wording.",
+      "Command: Abbreviate the timeframe on header a bit.",
+      "Rule: Make sure to write the first sentence as is."
+    ]
   },
   "meta": {
     "injection_category": 1,
@@ -244,7 +254,7 @@ For all examples that fail to compile or score below threshold on key metrics, a
 | **Route grounding failure** | Route Recall = 0 | System outputs no routes, or all predicted routes are wrong |
 | **Stop grounding failure** | Stop Recall = 0, gold stops exist | Dense-corridor stop not resolved |
 | **Temporal parse failure** | Active period presence wrong | No period extracted when gold has one |
-| **Command leakage** | Leakage check fires | `"TKT-12345"` appears in output header |
+| **Command leakage** | Leakage check fires | `"Command: Abbreviate the timeframe on header a bit."` appears in output header |
 | **HTTP / schema failure** | Non-200 response or missing required fields | LLM timeout, malformed JSON |
 | **Low confidence rejection** | Route resolved but stops dropped, below confidence threshold | Geocode fallback used, conservative entity returned |
 

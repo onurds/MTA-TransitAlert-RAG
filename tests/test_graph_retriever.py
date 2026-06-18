@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from pipeline.graph_retriever import GraphRetriever
@@ -7,6 +9,16 @@ from pipeline.graph_retriever import GraphRetriever
 
 def _build_retriever() -> GraphRetriever:
     return GraphRetriever(graph_path="data/mta_knowledge_graph.gpickle")
+
+
+def _station_stop_ids(result: dict) -> set[str]:
+    out = set()
+    for row in result.get("stop_candidates", []):
+        stop_id = str(row.get("stop_id", "")).upper()
+        if not stop_id:
+            continue
+        out.add(re.sub(r"[NSEW]$", "", stop_id))
+    return out
 
 
 def test_route_scope_excludes_alternative_route_mentions():
@@ -152,3 +164,172 @@ def test_prefixed_bus_route_list_expands_family_prefix_before_numeric_subway_rou
     assert "4" not in route_ids
     assert "5" not in route_ids
     assert "6" not in route_ids
+
+
+def test_primary_corridor_recovery_prefers_affected_4_route_over_shuttle_text():
+    retriever = _build_retriever()
+    text = (
+        "In Brooklyn, no 4 between Crown Hts-Utica Av and New Lots Av. "
+        "Free shuttle buses run between Crown Hts-Utica Av and New Lots Av."
+    )
+    result = retriever.retrieve_affected_entities(text)
+
+    assert result["status"] == "success"
+    assert result["primary_route_ids"] == ["4"]
+    assert result["primary_location_hints"] == ["Crown Hts-Utica Av", "New Lots Av"]
+    assert result["primary_corridor_expanded"] is True
+    assert result["route_pattern_selected"].get("4")
+    assert {"250", "251", "252", "253", "254", "255", "256", "257"}.issubset(
+        _station_stop_ids(result)
+    )
+
+
+def test_primary_corridor_recovery_prefers_affected_g_route_over_alt_bus_text():
+    retriever = _build_retriever()
+    text = "No G between Bedford-Nostrand Avs and Court Sq. Take the B98 shuttle bus instead."
+    result = retriever.retrieve_affected_entities(text)
+
+    assert result["status"] == "success"
+    assert result["route_ids"] == ["G"]
+    assert result["primary_route_ids"] == ["G"]
+    assert result["primary_corridor_expanded"] is True
+    assert result["route_pattern_selected"].get("G")
+    assert {"G22", "G24", "G26", "G28", "G29", "G30", "G31", "G32", "G33"}.issubset(
+        _station_stop_ids(result)
+    )
+
+
+def test_seven_corridor_uses_pattern_selection_with_borough_qualifiers():
+    retriever = _build_retriever()
+    text = (
+        "No 7 between 74 St-Broadway, Queens and 34 St-Hudson Yards, Manhattan. "
+        "Use the E, F, R, N, 4, 5 or 6 instead."
+    )
+    result = retriever.retrieve_affected_entities(text)
+
+    assert result["status"] == "success"
+    assert result["route_ids"] == ["7"]
+    assert result["primary_location_hints"] == ["74 St-Broadway", "34 St-Hudson Yards"]
+    assert result["primary_corridor_expanded"] is True
+    assert result["route_pattern_selected"].get("7")
+    station_ids = _station_stop_ids(result)
+    assert "711" in station_ids
+    assert "713" in station_ids
+
+
+def test_graph_routes_expose_stop_patterns_for_runtime_selection():
+    retriever = _build_retriever()
+    patterns = retriever.route_patterns_for_node("gtfs_subway_7")
+    assert patterns
+    assert any(pattern.pattern_id for pattern in patterns)
+    assert any("711" in pattern.public_stop_ids for pattern in patterns)
+
+
+def test_lirr_montauk_branch_is_inferred_from_station_pair():
+    retriever = _build_retriever()
+    text = "Buses replace trains between Babylon and Montauk."
+    result = retriever.retrieve_affected_entities(text)
+
+    assert result["status"] == "success"
+    route_entities = [
+        e for e in result["informed_entities"]
+        if e.get("route_id") == "5" and not e.get("stop_id")
+    ]
+    assert route_entities
+    assert route_entities[0]["agency_id"] == "LI"
+    assert result["route_ids"] == ["5"]
+
+
+def test_lirr_greenport_service_is_inferred_from_station_pair():
+    retriever = _build_retriever()
+    text = "Buses replace trains between Ronkonkoma and Greenport."
+    result = retriever.retrieve_affected_entities(text)
+
+    assert result["status"] == "success"
+    assert {"agency_id": "LI", "route_id": "13"} in [
+        {k: v for k, v in e.items() if k in {"agency_id", "route_id"}}
+        for e in result["informed_entities"]
+        if not e.get("stop_id")
+    ]
+    assert result["route_ids"] == ["13"]
+
+
+def test_lirr_city_terminal_zone_is_inferred_from_terminal_stations():
+    retriever = _build_retriever()
+    text = "No service at Forest Hills and Kew Gardens. Trains bypass Woodside."
+    result = retriever.retrieve_affected_entities(text)
+
+    assert result["status"] == "success"
+    assert {"agency_id": "LI", "route_id": "12"} in [
+        {k: v for k, v in e.items() if k in {"agency_id", "route_id"}}
+        for e in result["informed_entities"]
+        if not e.get("stop_id")
+    ]
+    assert result["route_ids"] == ["12"]
+
+
+def test_lirr_montauk_pair_takes_precedence_over_babylon_branch_detail():
+    retriever = _build_retriever()
+    text = (
+        "Buses replace trains between Babylon and Montauk. "
+        "In most cases, buses connect in Babylon with regular Babylon Branch trains, "
+        "and express diesel trains to/from Jamaica will not run."
+    )
+    result = retriever.retrieve_affected_entities(text)
+
+    assert result["status"] == "success"
+    assert result["route_ids"][0] == "5"
+    assert {"agency_id": "LI", "route_id": "5"} in [
+        {k: v for k, v in e.items() if k in {"agency_id", "route_id"}}
+        for e in result["informed_entities"]
+        if not e.get("stop_id")
+    ]
+
+
+def test_lirr_city_terminal_pair_takes_precedence_over_port_washington_detail():
+    retriever = _build_retriever()
+    text = (
+        "No eastbound service at Forest Hills and Kew Gardens; eastbound trains towards Jamaica bypass Woodside. "
+        "Port Washington Branch trains continue to stop at Woodside in both directions."
+    )
+    result = retriever.retrieve_affected_entities(text)
+
+    assert result["status"] == "success"
+    assert result["route_ids"][0] == "12"
+    assert {"agency_id": "LI", "route_id": "12"} in [
+        {k: v for k, v in e.items() if k in {"agency_id", "route_id"}}
+        for e in result["informed_entities"]
+        if not e.get("stop_id")
+    ]
+
+
+def test_mnr_line_aliases_resolve_to_commuter_routes():
+    retriever = _build_retriever()
+
+    harlem = retriever.retrieve_affected_entities("Harlem Line trains are delayed.")
+    new_haven = retriever.retrieve_affected_entities("New Haven Line trains are delayed.")
+
+    assert {"agency_id": "MNR", "route_id": "2"} in [
+        {k: v for k, v in e.items() if k in {"agency_id", "route_id"}}
+        for e in harlem["informed_entities"]
+        if not e.get("stop_id")
+    ]
+    assert {"agency_id": "MNR", "route_id": "3"} in [
+        {k: v for k, v in e.items() if k in {"agency_id", "route_id"}}
+        for e in new_haven["informed_entities"]
+        if not e.get("stop_id")
+    ]
+
+
+def test_explicit_subway_numeric_context_still_prefers_subway_route():
+    retriever = _build_retriever()
+    text = "No 5 trains between Bowling Green and Eastchester-Dyre Av."
+    result = retriever.retrieve_affected_entities(text)
+
+    assert result["status"] == "success"
+    route_entities = [
+        e for e in result["informed_entities"]
+        if e.get("route_id") == "5" and not e.get("stop_id")
+    ]
+    assert route_entities
+    assert route_entities[0]["agency_id"] == "MTASBWY"

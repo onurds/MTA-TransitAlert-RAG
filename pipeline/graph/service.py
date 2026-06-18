@@ -89,6 +89,11 @@ class GraphRetriever(
             if alt_override_segments:
                 alternative_segments = alt_override_segments
         has_strong_stop_intent = self._has_strong_stop_intent(text)
+        primary_route_ids = self._extract_primary_affected_route_ids(
+            text,
+            seed_entities=seed_entities,
+            affected_segments=affected_segments,
+        )
         if route_ids_override:
             route_ids = self.validate_route_ids(route_ids_override)
             if seed_entities:
@@ -136,6 +141,14 @@ class GraphRetriever(
             self._extract_location_hints(text),
             None,
         )
+        primary_location_hints = self._extract_primary_location_hints(
+            text,
+            affected_segments=affected_segments,
+        )
+        secondary_location_hints = [
+            hint for hint in location_hints
+            if hint.lower() not in {p.lower() for p in primary_location_hints}
+        ]
 
         for route_id in route_ids:
             route_choice = self._choose_route_node(
@@ -171,22 +184,45 @@ class GraphRetriever(
         stop_candidates: List[Dict[str, Any]] = []
         stop_scores: List[float] = []
         corridor_detected = False
+        primary_corridor_detected = False
+        primary_corridor_expanded = False
+        alternative_route_suppression_applied = False
+        route_pattern_selected: Dict[str, str] = {}
 
         for choice in route_choices:
             informed_entities.append({"agency_id": choice.agency_id, "route_id": choice.route_id})
+            is_primary_route = not primary_route_ids or choice.route_id in primary_route_ids
+            if primary_route_ids and not is_primary_route:
+                alternative_route_suppression_applied = True
+                continue
 
             route_stops = self._route_neighborhood_stops(choice.route_node_id)
-            route_stop_matches = self._match_affected_stops(
+            route_patterns = self.route_patterns_for_node(choice.route_node_id)
+            route_stop_match_result = self._match_affected_stops(
                 route_stops=route_stops,
                 affected_segments=affected_segments,
                 alternative_segments=alternative_segments,
-                location_hints=location_hints,
+                location_hints=primary_location_hints + secondary_location_hints,
                 allow_segment_scoring=has_strong_stop_intent,
+                primary_location_hints=primary_location_hints if is_primary_route else [],
+                route_patterns=route_patterns,
             )
+            route_stop_matches = route_stop_match_result.get("matches", [])
+            primary_corridor_detected = (
+                primary_corridor_detected
+                or bool(route_stop_match_result.get("primary_corridor_detected"))
+            )
+            primary_corridor_expanded = (
+                primary_corridor_expanded
+                or bool(route_stop_match_result.get("primary_corridor_expanded"))
+            )
+            selected_pattern_id = route_stop_match_result.get("route_pattern_selected")
+            if selected_pattern_id:
+                route_pattern_selected[choice.route_id] = str(selected_pattern_id)
 
-            # Detect corridor expansion: 2 endpoint hints produced >2 matched stops,
-            # meaning the BFS walk found intermediate corridor stops.
-            if len(location_hints or []) == 2 and len(route_stop_matches) > 2:
+            if len(primary_location_hints or []) >= 2 and len(route_stop_matches) > 2:
+                corridor_detected = True
+            elif len(location_hints or []) == 2 and len(route_stop_matches) > 2:
                 corridor_detected = True
 
             for stop_id, stop_name, score in route_stop_matches:
@@ -260,7 +296,14 @@ class GraphRetriever(
         else:
             stop_confidence = 0.2
 
-        fallback_needed = has_stop_indication and not stop_scores
+        if primary_location_hints and len(primary_location_hints) >= 2 and not primary_corridor_expanded:
+            stop_confidence = min(stop_confidence, 0.68 if stop_scores else 0.2)
+
+        fallback_needed = has_stop_indication and (
+            not stop_scores or (
+                len(primary_location_hints) >= 2 and not primary_corridor_expanded
+            )
+        )
         route_ids_out = [c.route_id for c in route_choices]
 
         return {
@@ -276,12 +319,24 @@ class GraphRetriever(
             "matched_stop_count": len(stop_scores),
             "has_stop_intent": has_stop_indication,
             "corridor_detected": corridor_detected,
+            "primary_route_ids": primary_route_ids,
+            "primary_location_hints": primary_location_hints,
+            "primary_corridor_detected": primary_corridor_detected,
+            "primary_corridor_expanded": primary_corridor_expanded,
+            "alternative_route_suppression_applied": alternative_route_suppression_applied,
+            "route_pattern_selected": route_pattern_selected,
             "high_level_context": self.retrieve_high_level_context(
                 alert_text=text,
                 route_ids=route_ids_out,
                 location_hints=location_hints,
                 stop_candidates=stop_candidates,
                 corridor_detected=corridor_detected,
+                primary_route_ids=primary_route_ids,
+                primary_location_hints=primary_location_hints,
+                primary_corridor_detected=primary_corridor_detected,
+                primary_corridor_expanded=primary_corridor_expanded,
+                alternative_route_suppression_applied=alternative_route_suppression_applied,
+                route_pattern_selected=route_pattern_selected,
             ),
         }
 
@@ -292,6 +347,12 @@ class GraphRetriever(
         location_hints: Sequence[str],
         stop_candidates: Sequence[Dict[str, Any]],
         corridor_detected: bool = False,
+        primary_route_ids: Optional[Sequence[str]] = None,
+        primary_location_hints: Optional[Sequence[str]] = None,
+        primary_corridor_detected: bool = False,
+        primary_corridor_expanded: bool = False,
+        alternative_route_suppression_applied: bool = False,
+        route_pattern_selected: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         normalized_routes = self.validate_route_ids(route_ids)
         corridor_stop_names: List[str] = []
@@ -333,6 +394,10 @@ class GraphRetriever(
             "route_families": self._route_families(normalized_routes),
             "corridor_stop_names": corridor_stop_names,
             "location_hints": [str(h).strip() for h in location_hints if str(h).strip()][:5],
+            "primary_route_ids": self.validate_route_ids(primary_route_ids or []),
+            "primary_location_hints": [
+                str(h).strip() for h in (primary_location_hints or []) if str(h).strip()
+            ][:4],
             "co_occurring_routes": co_occurring_routes,
             "agency_context": sorted(
                 {
@@ -342,6 +407,10 @@ class GraphRetriever(
             ),
             "alert_patterns": alert_patterns,
             "corridor_detected": corridor_detected,
+            "primary_corridor_detected": primary_corridor_detected,
+            "primary_corridor_expanded": primary_corridor_expanded,
+            "alternative_route_suppression_applied": alternative_route_suppression_applied,
+            "route_pattern_selected": dict(route_pattern_selected or {}),
         }
 
     @staticmethod

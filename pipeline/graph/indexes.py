@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import networkx as nx
 import numpy as np
 
-from .constants import AGENCY_ID_BY_GTFS_NAMESPACE
+from .constants import AGENCY_ID_BY_GTFS_NAMESPACE, RoutePattern
 
 
 class GraphIndexMixin:
@@ -24,6 +24,7 @@ class GraphIndexMixin:
     route_phrase_to_id: Dict[str, str]
     route_code_aliases: Dict[str, str]
     route_display_name_by_id: Dict[str, str]
+    route_patterns_by_node: Dict[str, List[RoutePattern]]
 
     def _load_graph(self) -> None:
         print(f"Loading Knowledge Graph from {self.graph_path}...")
@@ -42,6 +43,7 @@ class GraphIndexMixin:
         self.route_short_name_by_id.clear()
         self.route_phrase_to_id.clear()
         self.route_display_name_by_id.clear()
+        self.route_patterns_by_node = {}
         self.route_code_aliases = {"SIR": "SI"}
         stop_name_phrases = self._stop_name_phrase_index()
 
@@ -71,6 +73,9 @@ class GraphIndexMixin:
             namespace = self._namespace_from_node(node)
             agency_id = AGENCY_ID_BY_GTFS_NAMESPACE.get(namespace, "MTA NYCT")
             self.route_agency_by_node[node] = agency_id
+            self.route_patterns_by_node[node] = self._coerce_route_patterns(
+                attrs.get("stop_patterns")
+            )
 
             # For commuter-rail routes (LIRR / MNR) there is no short_name, so the
             # only textual handle is the long_name (e.g. "Harlem", "New Haven",
@@ -101,6 +106,39 @@ class GraphIndexMixin:
             long_name = self.route_long_name_by_id.get(rid)
             if long_name:
                 self.route_display_name_by_id[rid] = long_name
+
+    @staticmethod
+    def _coerce_route_patterns(raw_patterns: Any) -> List[RoutePattern]:
+        out: List[RoutePattern] = []
+        if not isinstance(raw_patterns, list):
+            return out
+        for raw in raw_patterns:
+            if not isinstance(raw, dict):
+                continue
+            stop_nodes = tuple(
+                str(node).strip()
+                for node in (raw.get("stop_nodes") or [])
+                if str(node).strip()
+            )
+            public_stop_ids = tuple(
+                str(stop_id).strip().upper()
+                for stop_id in (raw.get("public_stop_ids") or [])
+                if str(stop_id).strip()
+            )
+            if len(stop_nodes) < 2 or len(stop_nodes) != len(public_stop_ids):
+                continue
+            out.append(
+                RoutePattern(
+                    pattern_id=str(raw.get("pattern_id") or "").strip() or "pattern",
+                    direction_id=str(raw.get("direction_id") or "").strip(),
+                    headsign=str(raw.get("headsign") or "").strip(),
+                    count=int(raw.get("count") or 0),
+                    stop_nodes=stop_nodes,
+                    public_stop_ids=public_stop_ids,
+                )
+            )
+        out.sort(key=lambda p: (p.count, len(p.stop_nodes)), reverse=True)
+        return out
 
     def _route_alias_phrases(
         self,
@@ -234,6 +272,13 @@ class GraphIndexMixin:
         value = str(stop_node_or_id or "").strip().upper()
         return value.split("_")[-1] if "_" in value else value
 
+    @classmethod
+    def to_station_stop_id(cls, stop_node_or_id: str) -> str:
+        value = cls.to_public_stop_id(stop_node_or_id)
+        if re.fullmatch(r"[A-Z0-9]+[NS]", value):
+            return value[:-1]
+        return value
+
     @staticmethod
     def _normalize_route_token(token: str) -> str:
         t = token.strip().upper()
@@ -358,6 +403,9 @@ class GraphIndexMixin:
                 seen.add(sid)
                 out.append(sid)
         return out
+
+    def route_patterns_for_node(self, route_node_id: str) -> List[RoutePattern]:
+        return list(self.route_patterns_by_node.get(route_node_id, []))
 
     def agency_for_route_id(self, route_id: str) -> str:
         rid = self.normalize_route_id(route_id)

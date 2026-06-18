@@ -11,9 +11,14 @@ CONTROL_PATTERNS = (
     r"\bdates?\s+(?:will\s+be|are|should\s+be)\b",
     r"\bset\s+the\s+dates?\b",
     r"\bmake\s+the\s+timeframe\b",
+    r"\bmake\s+the\s+dates?\s+match\s+the\s+timeframe\s+above\b",
     r"\buse\s+this\s+as\s+the\s+header\b",
     r"\bmake\s+this\s+bold\b",
     r"\bmake\s+sure\s+to\s+get\s+it\s+right\b",
+    r"\bdo\s+not\s+rewrite\s+the\s+route\s+names\b",
+    r"\bdo\s+not\s+change\s+or\s+rephrase\s+the\s+wording\b",
+    r"\bcommand:\s*abbreviate\s+the\s+timeframe\s+on\s+header\s+a\s+bit\b",
+    r"\brule:\s*make\s+sure\s+to\s+write\s+the\s+first\s+sentence\s+as\s+is\b",
     r"\bverify\s+the\s+route\s+information\b",
     r"\bsee\s+ticket\s*#?\w+\b",
     r"\btkt-\w+\b",
@@ -52,6 +57,18 @@ TEMPORAL_PATTERNS = (
     "minutes",
     "am",
     "pm",
+)
+
+TEMPORAL_DIRECTIVE_PATTERNS = (
+    r"\btimeframe\s+is\b",
+    r"\bdates?\s+(?:will\s+be|are|should\s+be)\b",
+    r"\bset\s+the\s+dates?\b",
+    r"\bmake\s+the\s+timeframe\b",
+    r"\bit\s+should\s+start\b",
+    r"^\s*(?:today|tomorrow|tonight)\s+from\b",
+    r"^\s*in\s+two\s+days\s+from\b",
+    r"\bfrom\s+now\s+until\b",
+    r"\bfor\s+the\s+next\s+\d+",
 )
 
 LOCATION_PATTERNS = (
@@ -107,16 +124,12 @@ def command_stripped_instruction(units: Sequence[EvidenceUnit]) -> str:
 
 def _classify_part(part: str) -> str:
     lower = f" {part.lower()} "
-    if _looks_temporal(part) and any(
-        token in lower for token in ("timeframe", "date", "dates", "until", "from now", "today", "tomorrow")
-    ):
+    if any(re.search(pattern, part, flags=re.IGNORECASE) for pattern in TEMPORAL_DIRECTIVE_PATTERNS):
         return "temporal_directive"
     if any(re.search(pattern, lower, flags=re.IGNORECASE) for pattern in CONTROL_PATTERNS):
         return "operator_control"
     if any(re.search(pattern, lower, flags=re.IGNORECASE) for pattern in RIDER_GUIDANCE_PATTERNS):
         return "rider_guidance"
-    if _looks_temporal(part):
-        return "temporal_directive"
     if _looks_alternative(part):
         return "alternative_service"
     return "affected_service"
@@ -126,7 +139,13 @@ def _looks_temporal(text: str) -> bool:
     lower = (text or "").lower()
     if re.search(r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", lower):
         return True
-    return any(token in lower for token in TEMPORAL_PATTERNS)
+    for token in TEMPORAL_PATTERNS:
+        if " " in token:
+            if token in lower:
+                return True
+        elif re.search(rf"\b{re.escape(token)}\b", lower):
+            return True
+    return False
 
 
 def _looks_alternative(text: str) -> bool:

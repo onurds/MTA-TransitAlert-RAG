@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Tuple
 
 # Public agency IDs observed in MTA alert feeds.
 AGENCY_ID_BY_GTFS_NAMESPACE = {
@@ -65,3 +66,13 @@ class RouteChoice:
     agency_id: str
     neighborhood_size: int
     stop_match_score: float
+
+
+@dataclass(frozen=True)
+class RoutePattern:
+    pattern_id: str
+    direction_id: str
+    headsign: str
+    count: int
+    stop_nodes: Tuple[str, ...]
+    public_stop_ids: Tuple[str, ...]

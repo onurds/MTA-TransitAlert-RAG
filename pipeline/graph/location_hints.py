@@ -7,6 +7,17 @@ from .constants import AFFECTED_LINE_MARKERS, ALT_LINE_MARKERS, LOCATION_PATTERN
 
 
 class LocationHintMixin:
+    PRIMARY_CORRIDOR_PATTERNS = (
+        re.compile(
+            r"\bbetween\s+([A-Za-z0-9\-\./&' ]+?)\s+and\s+([A-Za-z0-9\-\./&' ]+?)(?=\.|,|;|\n|$|\b(?:with|while|there|for|during)\b)",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\bfrom\s+([A-Za-z0-9\-\./&' ]+?)\s+to\s+([A-Za-z0-9\-\./&' ]+?)(?=\.|,|;|\n|$|\b(?:with|while|there|for|during)\b)",
+            re.IGNORECASE,
+        ),
+    )
+
     @staticmethod
     def _split_affected_and_alternative_segments(text: str) -> Tuple[List[str], List[str]]:
         parts = [p.strip() for p in re.split(r"[\n\r\.;]+", text or "") if p.strip()]
@@ -264,6 +275,59 @@ class LocationHintMixin:
         if re.search(r"\bfrom\s+.+\s+to\s+.+", lower):
             return True
         return False
+
+    @classmethod
+    def _extract_primary_location_hints(
+        cls,
+        text: str,
+        affected_segments: Optional[Sequence[str]] = None,
+    ) -> List[str]:
+        candidates: List[str] = []
+        segments = [str(seg).strip() for seg in (affected_segments or []) if str(seg).strip()]
+        if text:
+            first_sentence = re.split(r"[\n\r\.;]+", text, maxsplit=1)[0].strip()
+            if first_sentence:
+                segments.insert(0, first_sentence)
+
+        seen_segments = set()
+        deduped_segments: List[str] = []
+        for segment in segments:
+            key = segment.lower()
+            if key in seen_segments:
+                continue
+            seen_segments.add(key)
+            deduped_segments.append(segment)
+
+        for segment in deduped_segments[:4]:
+            segment = re.sub(
+                r",\s*(?:queens|manhattan|brooklyn|bronx|staten island)\b",
+                "",
+                segment,
+                flags=re.IGNORECASE,
+            )
+            lower = segment.lower()
+            if not any(token in lower for token in (" between ", " from ", " at ", " near ")):
+                continue
+            for pattern in cls.PRIMARY_CORRIDOR_PATTERNS:
+                match = pattern.search(segment)
+                if not match:
+                    continue
+                for raw in match.groups():
+                    cleaned = cls._clean_extracted_location_hint(raw)
+                    if cleaned:
+                        candidates.append(cleaned)
+                if candidates:
+                    return cls._merge_location_hints([], candidates)
+
+            if re.search(r"\bno\s+[A-Za-z0-9/\-+ ]+\s+at\s+", lower) or " near " in lower:
+                trailing = re.split(r"\bat\b|\bnear\b", segment, maxsplit=1, flags=re.IGNORECASE)
+                if len(trailing) == 2:
+                    cleaned = cls._clean_extracted_location_hint(trailing[1])
+                    if cleaned:
+                        candidates.append(cleaned)
+                        return cls._merge_location_hints([], candidates)
+
+        return cls._merge_location_hints([], candidates)
 
     @staticmethod
     def _parse_hint_constraint(hint: str) -> Dict[str, set]:

@@ -55,7 +55,20 @@ def challenge_subsets(row: Dict[str, Any], instruction: str, gold_entities: Any)
         tags.append("temporal_relative")
     if any(token in lower for token in ("every ", "weekly", "mondays", "tuesdays", "wednesdays", "thursdays", "fridays", "saturdays", "sundays")):
         tags.append("recurring")
-    if any(token in lower for token in ("timeframe is", "dates will be", "make sure to get it right", "use this as the header", "see attached map")):
+    if any(token in lower for token in (
+        "timeframe is",
+        "dates will be",
+        "make sure to get it right",
+        "use this as the header",
+        "make the dates match the timeframe above",
+        "do not rewrite the route names",
+        "keep the original wording",
+        "do not change or rephrase the wording",
+        "use the shorter version if possible",
+        "command: abbreviate the timeframe on header a bit",
+        "prioritize the first sentence",
+        "rule: make sure to write the first sentence as is",
+    )):
         tags.append("command_heavy")
     if any(token in lower for token in ("use the stop", "instead", "board or exit at", "no stops will be missed")):
         tags.append("alternative_stop_heavy")

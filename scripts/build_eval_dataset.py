@@ -220,12 +220,15 @@ def commands_for(category: int, index: int) -> Tuple[List[str], List[Dict[str, s
     if category == 1:
         return [], [], None
     temporal_case = temporal_case_for(index)
-    commands = [f"TKT-{10000 + index}.", temporal_case["command"]]
+    commands = [temporal_case["command"]]
     if category == 3:
         commands.extend([
-            "See attached map.",
             "Make sure to get it right.",
-            "Use this as the header.",
+            "Make the dates match the timeframe above.",
+            "Do not rewrite the route names.",
+            "Do not change or rephrase the wording.",
+            "Command: Abbreviate the timeframe on header a bit.",
+            "Rule: Make sure to write the first sentence as is.",
         ])
     return commands, list(temporal_case["gold_periods"]), temporal_case
 

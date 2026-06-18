@@ -30,7 +30,12 @@ def test_command_stripped_instruction_keeps_rider_text_but_drops_operator_contro
     instruction = (
         "B20 buses are detoured at Decatur St at Wilson Ave. "
         "Use the stop on Decatur St at Irving Ave instead. "
-        "Dates will be from now until 5 hours ahead."
+        "Dates will be from now until 5 hours ahead. "
+        "Make the dates match the timeframe above. "
+        "Do not rewrite the route names. "
+        "Do not change or rephrase the wording. "
+        "Command: Abbreviate the timeframe on header a bit. "
+        "Rule: Make sure to write the first sentence as is."
     )
 
     stripped = command_stripped_instruction(decompose_instruction(instruction))
@@ -38,3 +43,24 @@ def test_command_stripped_instruction_keeps_rider_text_but_drops_operator_contro
     assert "B20 buses are detoured" in stripped
     assert "Use the stop on Decatur St at Irving Ave instead." in stripped
     assert "Dates will be" not in stripped
+    assert "Make the dates match" not in stripped
+    assert "Do not rewrite the route names" not in stripped
+    assert "Do not change or rephrase" not in stripped
+    assert "Abbreviate the timeframe" not in stripped
+    assert "first sentence as is" not in stripped
+
+
+def test_command_stripped_instruction_keeps_train_times_and_jamaica_place_names():
+    instruction = (
+        "The 8:57am train from Poughkeepsie to Grand Central is operating 10-15 minutes late. "
+        "For service to/from bypassed stations, take a Jamaica or Forest Hills-bound train. "
+        "Timeframe is tomorrow from 7 AM to 10 AM. "
+        "Command: Abbreviate the timeframe on header a bit."
+    )
+
+    stripped = command_stripped_instruction(decompose_instruction(instruction))
+
+    assert "8:57am train" in stripped
+    assert "Jamaica or Forest Hills-bound train" in stripped
+    assert "Timeframe is tomorrow" not in stripped
+    assert "Abbreviate the timeframe" not in stripped

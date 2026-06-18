@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from .constants import RouteChoice
 
@@ -9,6 +9,19 @@ from .constants import RouteChoice
 class RouteResolverMixin:
     route_nodes_by_id: Dict[str, List[str]]
     route_agency_by_node: Dict[str, str]
+
+    COMMUTER_AGENCIES = {"LI", "MNR"}
+    CITY_TERMINAL_STOP_NAMES = {
+        "atlantic terminal",
+        "east new york",
+        "forest hills",
+        "grand central",
+        "jamaica",
+        "kew gardens",
+        "nostrand avenue",
+        "penn station",
+        "woodside",
+    }
 
     def _extract_route_ids(
         self,
@@ -20,7 +33,14 @@ class RouteResolverMixin:
         known_route_ids = set(self.route_nodes_by_id.keys())
         found: List[str] = []
 
+        alias_route_ids = self.route_alias_matches(text)
         token_candidates = self._route_tokens_from_text(text)
+        inferred_commuter_routes = self._infer_commuter_route_ids_from_station_context(
+            text=text,
+            affected_segments=affected_segments,
+        )
+        commuter_context = self._has_commuter_rail_context(text) or bool(inferred_commuter_routes)
+        explicit_subway_numeric = self._has_explicit_subway_numeric_route_context(text)
         alt_tokens = set()
         affected_tokens = set()
 
@@ -50,7 +70,18 @@ class RouteResolverMixin:
             if token in known_route_ids:
                 if token in alt_tokens and token not in affected_tokens:
                     continue
+                if (
+                    commuter_context
+                    and token.isdigit()
+                    and token in {"1", "2", "3", "4", "5", "6", "7"}
+                    and token not in inferred_commuter_routes
+                    and token not in alias_route_ids
+                    and not explicit_subway_numeric
+                ):
+                    continue
                 found.append(token)
+
+        found = list(inferred_commuter_routes) + found
 
         for entity in seed_entities or []:
             route_id = self._normalize_route_token(str(entity.get("route_id", "")))
@@ -66,6 +97,195 @@ class RouteResolverMixin:
             deduped.append(route_id)
 
         return deduped
+
+    def _has_commuter_rail_context(self, text: str) -> bool:
+        lower = f" {(text or '').lower()} "
+        context_markers = (
+            " lirr ",
+            " long island rail road ",
+            " long island railroad ",
+            " metro-north ",
+            " metro north ",
+            " mnr ",
+            " train time ",
+            " traintime ",
+            " branch ",
+            " line ",
+            " penn station ",
+            " grand central ",
+            " jamaica ",
+            " babylon ",
+            " montauk ",
+            " ronkonkoma ",
+            " greenport ",
+            " forest hills ",
+            " kew gardens ",
+            " woodside ",
+            " eastbound trains ",
+            " westbound trains ",
+        )
+        return any(marker in lower for marker in context_markers)
+
+    @staticmethod
+    def _has_explicit_subway_numeric_route_context(text: str) -> bool:
+        return bool(
+            re.search(
+                r"(?:\[[1-7]\])|(?:\b[1-7]\s+(?:train|trains|line|subway|express|local)\b)",
+                text or "",
+                flags=re.IGNORECASE,
+            )
+        )
+
+    def _infer_commuter_route_ids_from_station_context(
+        self,
+        text: str,
+        affected_segments: Optional[Sequence[str]] = None,
+    ) -> List[str]:
+        source = " ".join(
+            part.strip()
+            for part in [text or "", *(affected_segments or [])]
+            if str(part or "").strip()
+        )
+        norm_source = self._normalize_commuter_match_text(source)
+        if not norm_source:
+            return []
+
+        matched_city_terminal_names = self._matched_commuter_stop_names_for_route(
+            route_id="12",
+            route_node_id="gtfslirr_12",
+            norm_source=norm_source,
+        )
+        if (
+            len(matched_city_terminal_names) >= 2
+            and matched_city_terminal_names.issubset(self.CITY_TERMINAL_STOP_NAMES)
+        ):
+            # Alerts mentioning only terminal-zone LIRR stations often otherwise
+            # tie with through-running branches that also serve those stations.
+            return ["12"]
+
+        scored: List[Tuple[int, int, int, str]] = []
+        for route_id, route_nodes in self.route_nodes_by_id.items():
+            for route_node_id in route_nodes:
+                agency_id = self.route_agency_by_node.get(route_node_id, "")
+                if agency_id not in self.COMMUTER_AGENCIES:
+                    continue
+                matched_names = self._matched_commuter_stop_names_for_route(
+                    route_id=route_id,
+                    route_node_id=route_node_id,
+                    norm_source=norm_source,
+                )
+                if len(matched_names) < 2:
+                    continue
+                long_name = str(self.G.nodes[route_node_id].get("long_name", "") or "")
+                long_name_hit = int(
+                    self._normalized_phrase_in_text(
+                        self._normalize_commuter_match_text(long_name),
+                        norm_source,
+                    )
+                )
+                terminal_only = matched_names.issubset(self.CITY_TERMINAL_STOP_NAMES)
+                if terminal_only and route_id != "12":
+                    continue
+                # Prefer more matched stations, then an explicit branch/line name,
+                # then the smaller route neighborhood to break through-route ties.
+                route_stop_count = len(self._route_neighborhood_stops(route_node_id))
+                scored.append((len(matched_names), long_name_hit, -route_stop_count, route_id))
+
+        scored.sort(reverse=True)
+        out: List[str] = []
+        seen = set()
+        for _matches, _name_hit, _size_score, route_id in scored:
+            if route_id in seen:
+                continue
+            seen.add(route_id)
+            out.append(route_id)
+            if len(out) >= 3:
+                break
+        return out
+
+    def _matched_commuter_stop_names_for_route(
+        self,
+        route_id: str,
+        route_node_id: str,
+        norm_source: str,
+    ) -> Set[str]:
+        if route_node_id not in self.route_nodes_by_id.get(route_id, []):
+            return set()
+        matched: Set[str] = set()
+        for _stop_node, stop_name in self._route_neighborhood_stops(route_node_id):
+            norm_stop = self._normalize_commuter_match_text(stop_name)
+            if not norm_stop:
+                continue
+            if self._normalized_phrase_in_text(norm_stop, norm_source):
+                matched.add(norm_stop)
+        return matched
+
+    @classmethod
+    def _normalize_commuter_match_text(cls, text: str) -> str:
+        norm = cls._normalize_route_phrase(text)
+        if not norm:
+            return ""
+        replacements = (
+            ("new york penn station", "penn station"),
+            ("ny penn station", "penn station"),
+            ("nyc penn station", "penn station"),
+            ("grand central madison", "grand central"),
+            ("hunterspoint av", "hunterspoint avenue"),
+        )
+        padded = f" {norm} "
+        for src, dst in replacements:
+            padded = padded.replace(f" {src} ", f" {dst} ")
+        return re.sub(r"\s{2,}", " ", padded).strip()
+
+    @staticmethod
+    def _normalized_phrase_in_text(phrase: str, norm_text: str) -> bool:
+        needle = re.escape((phrase or "").strip())
+        if not needle:
+            return False
+        return bool(re.search(rf"(?<![a-z0-9]){needle}(?![a-z0-9])", norm_text or ""))
+
+    def _extract_primary_affected_route_ids(
+        self,
+        text: str,
+        seed_entities: Optional[List[Dict[str, Any]]] = None,
+        affected_segments: Optional[Sequence[str]] = None,
+    ) -> List[str]:
+        candidate_segments: List[str] = []
+        if text:
+            first_sentence = re.split(r"[\n\r\.;]+", text, maxsplit=1)[0].strip()
+            if first_sentence:
+                candidate_segments.append(first_sentence)
+        candidate_segments.extend(
+            str(segment).strip()
+            for segment in (affected_segments or [])
+            if str(segment).strip()
+        )
+
+        seen = set()
+        for segment in candidate_segments[:4]:
+            lower = segment.lower()
+            if not any(
+                marker in lower
+                for marker in (" no ", "suspend", "bypass", "skip", "detour", "between", " at ")
+            ):
+                continue
+            route_ids = self._extract_route_ids(
+                segment,
+                seed_entities=seed_entities,
+                affected_segments=[segment],
+                alternative_segments=[],
+            )
+            if route_ids:
+                out: List[str] = []
+                for route_id in route_ids:
+                    if route_id in seen:
+                        continue
+                    seen.add(route_id)
+                    out.append(route_id)
+                if out:
+                    return out
+
+        return []
 
     @staticmethod
     def _dedupe_route_ids(route_ids: Sequence[str]) -> List[str]:
@@ -104,7 +324,9 @@ class RouteResolverMixin:
         # "direction-bound X": "Flushing-bound 7", "Woodlawn-bound 4", "Manhattan-bound J"
         tokens.extend(re.findall(r"\b[A-Za-z]+-bound\s+([A-Z0-9]{1,3})\b", src))
         # "no X between/service/trains": "no F between", "no 7 between", "no B service"
-        tokens.extend(re.findall(r"\bno\s+([A-Z0-9]{1,3})\b", src))
+        tokens.extend(
+            re.findall(r"\bno\s+([A-Z0-9]{1,3})\b", src, flags=re.IGNORECASE)
+        )
         # "X skips/runs/bypasses": "7 skips", "J skips", "Q runs", "D runs local"
         tokens.extend(
             re.findall(r"\b([A-Z0-9]{1,3})\s+(?:skips?|runs?\b|bypasses?)", src)
