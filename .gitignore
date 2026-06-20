@@ -1,4 +1,5 @@
-/MTA_GTFS
+/MTA_GTFS/*
+!/MTA_GTFS/zips/
 /micromamba
 /runpod
 /.vscode
