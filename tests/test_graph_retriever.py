@@ -240,6 +240,12 @@ def test_lirr_montauk_branch_is_inferred_from_station_pair():
     assert result["route_ids"] == ["5"]
 
 
+def test_generic_commuter_words_do_not_create_commuter_context():
+    retriever = _build_retriever()
+
+    assert not retriever._has_commuter_rail_context("Check TrainTime for branch or line information.")
+
+
 def test_lirr_greenport_service_is_inferred_from_station_pair():
     retriever = _build_retriever()
     text = "Buses replace trains between Ronkonkoma and Greenport."

@@ -42,6 +42,7 @@ class IntentParser:
             parsed = self._llm_extract_intent(text, compact=True)
         if parsed is not None:
             route_ids = self._merge_unique_tokens(parsed.explicit_route_ids, heuristic_routes)
+            route_ids = self._apply_replacement_route_policy(text, route_ids)
             stop_ids = self._merge_unique_tokens(parsed.explicit_stop_ids, heuristic_stops)
             return IntentParseResult(
                 alert_text=parsed.alert_text,
@@ -207,6 +208,28 @@ class IntentParser:
     def _extract_explicit_route_ids(self, text: str) -> List[str]:
         tokens = self.retriever._route_tokens_from_text(text)
         return self._merge_unique_tokens(tokens)
+
+    @staticmethod
+    def _apply_replacement_route_policy(text: str, route_ids: Sequence[str]) -> List[str]:
+        match = re.search(
+            r"\b([A-Z0-9][A-Z0-9+-]*(?:-SBS)?)\s+replaces\s+([A-Z0-9][A-Z0-9+-]*(?:-SBS)?)\s+service\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return list(route_ids)
+
+        replacement = match.group(1).strip().upper()
+        original = match.group(2).strip().upper()
+        out: List[str] = []
+        seen = set()
+        for route_id in [replacement, *route_ids]:
+            token = str(route_id or "").strip().upper()
+            if not token or token == original or token in seen:
+                continue
+            seen.add(token)
+            out.append(token)
+        return out
 
     @staticmethod
     def _merge_unique_tokens(*groups: Sequence[str]) -> List[str]:

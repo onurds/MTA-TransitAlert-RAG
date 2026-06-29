@@ -59,3 +59,32 @@ def test_intent_parser_accepts_gemini_style_block_content():
     assert parsed.explicit_stop_ids == ("553345",)
     assert parsed.location_phrases == ("stop id 553345",)
     assert parsed.effect_hint == "NO_SERVICE"
+
+
+def test_replacement_route_policy_treats_replacement_as_affected():
+    llm = _FakeLLM(
+        (
+            '{'
+            '"alert_text":"Late night 3 replaces 4 service to/from New Lots Av",'
+            '"temporal_text":"late night",'
+            '"explicit_route_ids":["3","4"],'
+            '"explicit_stop_ids":[],'
+            '"location_phrases":["New Lots Av"],'
+            '"effect_hint":"REPLACEMENT",'
+            '"cause_hint":"PLANNED_WORK",'
+            '"style_intent":"moderate",'
+            '"parse_confidence":0.85,'
+            '"alternative_service_text":null'
+            '}'
+        )
+    )
+    parser = IntentParser(
+        retriever=_FakeRetriever(),
+        ensure_llm=lambda: True,
+        llm_getter=lambda: llm,
+        bump_telemetry=lambda key, amount: None,
+    )
+
+    parsed = parser.parse("Late night 3 replaces 4 service to/from New Lots Av.")
+
+    assert parsed.explicit_route_ids == ("3",)
