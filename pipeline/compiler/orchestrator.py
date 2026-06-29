@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
@@ -185,6 +186,11 @@ class AlertCompiler:
                 "explicit_route_ids": list(intent.explicit_route_ids),
                 "explicit_stop_ids": list(intent.explicit_stop_ids),
                 "location_phrases": list(intent.location_phrases),
+                "affected_route_mentions": [mention.__dict__ for mention in intent.affected_route_mentions],
+                "affected_stop_mentions": [mention.__dict__ for mention in intent.affected_stop_mentions],
+                "alternative_route_mentions": [mention.__dict__ for mention in intent.alternative_route_mentions],
+                "alternative_stop_mentions": [mention.__dict__ for mention in intent.alternative_stop_mentions],
+                "corridor_endpoints": [mention.__dict__ for mention in intent.corridor_endpoints],
                 "effect_hint": intent.effect_hint,
                 "cause_hint": intent.cause_hint,
             },
@@ -204,54 +210,116 @@ class AlertCompiler:
 
         temporal_text = intent.temporal_text or temporal_source_text or header
         temporal_override = bool(intent.temporal_text or has_temporal_hint(instruction))
-        temporal_confidence = 0.4
-        active_periods: List[Dict[str, Any]] = []
         reference_dt = self._parse_reference_time(request.reference_time)
         compiled_at_posix = int(reference_dt.timestamp())
+        llm_for_request = self.llm
+        local_entity_selector = EntitySelector(
+            ensure_llm=lambda: llm_for_request is not None,
+            llm_getter=lambda: llm_for_request,
+        )
 
-        resolved_periods: List[Dict[str, Any]] = []
-        if self.temporal_resolver:
-            print("[DEBUG] Phase 2: Temporal Resolution...")
-            llm_periods = self.temporal_selector.resolve_periods(
-                llm=self.llm,
-                temporal_text=temporal_text,
-                full_instruction=temporal_source_text,
-                resolver=self.temporal_resolver,
-                reference_dt=reference_dt,
-            )
-            for p in llm_periods:
-                resolved_periods.append({"start": p.start, "end": p.end})
+        def _resolve_temporal_branch() -> Dict[str, Any]:
+            temporal_selector = TemporalSelector()
+            resolved_periods: List[Dict[str, Any]] = []
+            if self.temporal_resolver:
+                print("[DEBUG] Phase 2: Temporal Resolution...")
+                llm_periods = temporal_selector.resolve_periods(
+                    llm=llm_for_request,
+                    temporal_text=temporal_text,
+                    full_instruction=temporal_source_text,
+                    resolver=self.temporal_resolver,
+                    reference_dt=reference_dt,
+                )
+                for p in llm_periods:
+                    resolved_periods.append({"start": p.start, "end": p.end})
 
-        if temporal_override and resolved_periods:
-            active_periods = resolved_periods
-            temporal_confidence = 0.98
-        elif resolved_periods:
-            active_periods = resolved_periods
-            temporal_confidence = 0.9
-        else:
-            now_iso = reference_dt.strftime("%Y-%m-%dT%H:%M:%S")
-            active_periods = [{"start": now_iso}]
-        compile_report["stages"].append({
-            "stage": "temporal_resolution",
-            "source": self.temporal_selector.last_resolution_report.get("source", "llm" if resolved_periods else "deterministic"),
-            "inputs": {
-                "temporal_text": temporal_text,
-                "reference_dt": reference_dt.isoformat(),
-            },
-            "outputs": {"active_periods": active_periods},
-            "scores": {
+            if temporal_override and resolved_periods:
+                active_periods = resolved_periods
+                temporal_confidence = 0.98
+            elif resolved_periods:
+                active_periods = resolved_periods
+                temporal_confidence = 0.9
+            else:
+                now_iso = reference_dt.strftime("%Y-%m-%dT%H:%M:%S")
+                active_periods = [{"start": now_iso}]
+                temporal_confidence = 0.4
+            report = temporal_selector.last_resolution_report
+            return {
+                "active_periods": active_periods,
                 "temporal_confidence": temporal_confidence,
-                "period_count": len(resolved_periods),
-            },
-            "repair_used": self.temporal_selector.last_resolution_report.get("repair_used", False),
-            "branch_decision": "resolved_periods" if resolved_periods else "immediate_start_fallback",
-            "details": (
-                f"Resolved {len(resolved_periods)} active period(s) with the LLM-backed calendar selector."
-                if resolved_periods
-                else "No concrete periods were resolved, so a deterministic immediate-start fallback was used."
-            ),
-        })
-        no_timeframe_mentioned = not temporal_override and not resolved_periods
+                "resolved_periods": resolved_periods,
+                "no_timeframe_mentioned": not temporal_override and not resolved_periods,
+                "report": report,
+                "stage": {
+                    "stage": "temporal_resolution",
+                    "source": report.get("source", "llm" if resolved_periods else "deterministic"),
+                    "inputs": {
+                        "temporal_text": temporal_text,
+                        "reference_dt": reference_dt.isoformat(),
+                    },
+                    "outputs": {"active_periods": active_periods},
+                    "scores": {
+                        "temporal_confidence": temporal_confidence,
+                        "period_count": len(resolved_periods),
+                    },
+                    "repair_used": report.get("repair_used", False),
+                    "branch_decision": "resolved_periods" if resolved_periods else "immediate_start_fallback",
+                    "details": (
+                        f"Resolved {len(resolved_periods)} active period(s) with the LLM-backed calendar selector."
+                        if resolved_periods
+                        else "No concrete periods were resolved, so a deterministic immediate-start fallback was used."
+                    ),
+                },
+            }
+
+        def _resolve_enum_branch() -> Dict[str, Any]:
+            enum_resolver = EnumResolver(
+                ensure_llm=lambda: llm_for_request is not None,
+                llm_getter=lambda: llm_for_request,
+                min_confidence=self.enum_confidence_threshold,
+            )
+            print("[DEBUG] Phase 5: Enum Resolution...")
+            cause_effect = enum_resolver.resolve(
+                text="\n".join([header, rider_source_text]).strip(),
+                cause_override=intent.cause_hint,
+                effect_override=intent.effect_hint,
+            )
+            report = enum_resolver.last_resolution_report
+            return {
+                "cause_effect": cause_effect,
+                "report": report,
+                "stage": {
+                    "stage": "enum_resolution",
+                    "source": report.get("source", "deterministic"),
+                    "inputs": {
+                        "text": "\n".join([header, rider_source_text]).strip(),
+                        "cause_override": intent.cause_hint,
+                        "effect_override": intent.effect_hint,
+                    },
+                    "outputs": {
+                        "cause": cause_effect.cause,
+                        "effect": cause_effect.effect,
+                    },
+                    "scores": {
+                        "cause_confidence": cause_effect.cause_confidence,
+                        "effect_confidence": cause_effect.effect_confidence,
+                    },
+                    "repair_used": report.get("repair_used", False),
+                    "branch_decision": "llm_enum_classifier",
+                    "details": (
+                        f"Cause/effect were accepted from the LLM classifier ({cause_effect.cause_confidence:.2f}/{cause_effect.effect_confidence:.2f})."
+                        if (
+                            cause_effect.cause_confidence >= self.enum_confidence_threshold
+                            or cause_effect.effect_confidence >= self.enum_confidence_threshold
+                        )
+                        else "Cause/effect fell back to deterministic defaults or low-confidence outputs."
+                    ),
+                },
+            }
+
+        parallel_executor = ThreadPoolExecutor(max_workers=2)
+        temporal_future = parallel_executor.submit(_resolve_temporal_branch)
+        enum_future = parallel_executor.submit(_resolve_enum_branch)
 
         print("[DEBUG] Phase 3: Entity Retrieval...")
         explicit_route_ids = self.retriever.validate_route_ids(intent.explicit_route_ids)
@@ -260,32 +328,31 @@ class AlertCompiler:
         if dropped_explicit:
             self._bump_telemetry("explicit_id_invalid_drop", dropped_explicit)
 
-        explicit_route_entities = [build_route_entity(self.retriever, rid) for rid in explicit_route_ids]
+        mention_route_entities = self.retriever.link_route_mention_entities(
+            mention.text for mention in intent.affected_route_mentions
+        )
+        mention_route_ids = {
+            str(entity.get("route_id", "")).upper()
+            for entity in mention_route_entities
+            if entity.get("route_id")
+        }
+        explicit_route_entities = dedupe_entities(
+            mention_route_entities
+            + [
+                build_route_entity(self.retriever, rid)
+                for rid in explicit_route_ids
+                if rid not in mention_route_ids
+            ]
+        )
         explicit_stop_entities = [build_stop_entity(self.retriever, sid) for sid in explicit_stop_ids]
         seed_entities = dedupe_entities(explicit_route_entities + explicit_stop_entities)
-        evidence_location_hints = [
-            u.text
-            for u in evidence_units
-            if u.unit_type == "location_evidence"
-        ]
-        affected_hints = [
-            u.text
-            for u in evidence_units
-            if u.unit_type == "location_evidence" and u.source == "affected_service"
-        ] or evidence_location_hints
-        alternative_hints = {
-            str(u.text).strip().lower()
-            for u in evidence_units
-            if u.unit_type == "location_evidence" and u.source == "alternative_service"
-        }
-        intent_hints = [
-            h
-            for h in intent.location_phrases
-            if str(h).strip().lower() not in alternative_hints and not self.retriever.is_route_name_phrase(str(h))
-        ]
-        if not affected_hints and not self.retriever._has_strong_stop_intent(affected_source_text):
-            intent_hints = []
-        location_hints_override = merge_text_tokens(affected_hints, intent_hints)
+        location_hints_override = list(intent.location_phrases)
+        primary_location_hints = [mention.text for mention in intent.corridor_endpoints]
+        if not explicit_route_ids:
+            explicit_route_ids = self.retriever.infer_commuter_route_ids_from_mentions(
+                location_hints_override
+            )
+            seed_entities = dedupe_entities(explicit_stop_entities)
 
         retrieval = self.retriever.retrieve_affected_entities(
             affected_source_text,
@@ -295,6 +362,9 @@ class AlertCompiler:
             alternative_hints_override=intent.alternative_service_text or None,
             max_stop_candidates=20,
             effect_hint=intent.effect_hint or None,
+            allow_text_route_detection=False,
+            allow_text_location_detection=False,
+            primary_location_hints_override=primary_location_hints or None,
         )
         high_level_context = retrieval.get("high_level_context", {}) if isinstance(retrieval, dict) else {}
         compile_report["stages"].append({
@@ -365,7 +435,7 @@ class AlertCompiler:
         llm_entity_conf = 0.0
         if allowed_route_ids or stop_candidates:
             print("[DEBUG] Phase 4: Entity Selection...")
-            llm_route_ids, llm_stop_ids, llm_entity_conf = self.entity_selector.llm_select_entities(
+            llm_route_ids, llm_stop_ids, llm_entity_conf = local_entity_selector.llm_select_entities(
                 text="\n".join([header, affected_source_text]).strip(),
                 allowed_route_ids=allowed_route_ids,
                 stop_candidates=stop_candidates,
@@ -374,9 +444,10 @@ class AlertCompiler:
                 location_hints=retrieval.get("location_hints", []),
                 high_level_context=high_level_context,
             )
+        entity_selection_report = local_entity_selector.last_selection_report
         compile_report["stages"].append({
             "stage": "entity_selection",
-            "source": self.entity_selector.last_selection_report.get("source", "llm" if (allowed_route_ids or stop_candidates) else "deterministic"),
+            "source": entity_selection_report.get("source", "llm" if (allowed_route_ids or stop_candidates) else "deterministic"),
             "inputs": {
                 "allowed_route_ids": allowed_route_ids,
                 "locked_route_ids": list(explicit_route_ids),
@@ -387,7 +458,7 @@ class AlertCompiler:
                 "selected_stop_ids": llm_stop_ids,
             },
             "scores": {"entity_selection_confidence": llm_entity_conf},
-            "repair_used": self.entity_selector.last_selection_report.get("repair_used", False),
+            "repair_used": entity_selection_report.get("repair_used", False),
             "branch_decision": "bounded_llm_selection" if (allowed_route_ids or stop_candidates) else "deterministic_only",
             "details": (
                 f"LLM selected {len(llm_route_ids)} route(s) and {len(llm_stop_ids)} stop(s) with confidence {llm_entity_conf:.2f}."
@@ -405,17 +476,40 @@ class AlertCompiler:
                 e for e in inferred_stop_entities if str(e.get("stop_id", "")).upper() in locked_stop_ids
             ]
         elif llm_stop_ids and llm_entity_conf >= 0.65 and retrieval_eval.state != "CORRECTIVE_FALLBACK":
-            inferred_stop_entities = [build_stop_entity(self.retriever, sid) for sid in llm_stop_ids]
+            candidate_entities = {
+                str(candidate.get("stop_id", "")).upper(): {
+                    "agency_id": str(candidate.get("agency_id", "")).strip(),
+                    "route_id": str(candidate.get("route_id", "")).strip().upper(),
+                    "stop_id": str(candidate.get("stop_id", "")).strip().upper(),
+                }
+                for candidate in stop_candidates
+                if candidate.get("stop_id") and candidate.get("agency_id")
+            }
+            inferred_stop_entities = [
+                candidate_entities.get(sid.upper()) or build_stop_entity(self.retriever, sid)
+                for sid in llm_stop_ids
+            ]
 
-        inferred_stop_entities = self.entity_selector.choose_stops_for_single_location(
+        inferred_stop_entities = local_entity_selector.choose_stops_for_single_location(
             stop_entities=inferred_stop_entities,
             source_text="\n".join([header, affected_source_text]),
             stop_candidates=stop_candidates,
             location_hints=retrieval.get("location_hints", []),
         )
 
+        grounded_route_ids = {
+            str(entity.get("route_id", "")).upper()
+            for entity in explicit_route_entities + inferred_route_entities
+            if entity.get("route_id")
+        }
         route_entities = dedupe_entities(
-            explicit_route_entities + inferred_route_entities + [build_route_entity(self.retriever, rid) for rid in llm_route_ids]
+            explicit_route_entities
+            + inferred_route_entities
+            + [
+                build_route_entity(self.retriever, rid)
+                for rid in llm_route_ids
+                if rid.upper() not in grounded_route_ids
+            ]
         )
         stop_entities = dedupe_entities(explicit_stop_entities + inferred_stop_entities)
         informed_entities = dedupe_entities(route_entities + stop_entities)
@@ -431,36 +525,17 @@ class AlertCompiler:
         if not route_conf and informed_entities:
             route_conf = 0.75
 
-        print("[DEBUG] Phase 5: Enum Resolution...")
-        cause_effect = self.enum_resolver.resolve(
-            text="\n".join([header, rider_source_text]).strip(),
-            cause_override=intent.cause_hint,
-            effect_override=intent.effect_hint,
-        )
-        compile_report["stages"].append({
-            "stage": "enum_resolution",
-            "source": self.enum_resolver.last_resolution_report.get("source", "deterministic"),
-            "inputs": {
-                "text": "\n".join([header, rider_source_text]).strip(),
-                "cause_override": intent.cause_hint,
-                "effect_override": intent.effect_hint,
-            },
-            "outputs": {
-                "cause": cause_effect.cause,
-                "effect": cause_effect.effect,
-            },
-            "scores": {
-                "cause_confidence": cause_effect.cause_confidence,
-                "effect_confidence": cause_effect.effect_confidence,
-            },
-            "repair_used": self.enum_resolver.last_resolution_report.get("repair_used", False),
-            "branch_decision": "llm_enum_classifier",
-            "details": (
-                f"Cause/effect were accepted from the LLM classifier ({cause_effect.cause_confidence:.2f}/{cause_effect.effect_confidence:.2f})."
-                if (cause_effect.cause_confidence >= self.enum_confidence_threshold or cause_effect.effect_confidence >= self.enum_confidence_threshold)
-                else "Cause/effect fell back to deterministic defaults or low-confidence outputs."
-            ),
-        })
+        temporal_result = temporal_future.result()
+        enum_result = enum_future.result()
+        parallel_executor.shutdown(wait=True)
+        active_periods = temporal_result["active_periods"]
+        temporal_confidence = temporal_result["temporal_confidence"]
+        no_timeframe_mentioned = temporal_result["no_timeframe_mentioned"]
+        temporal_report = temporal_result["report"]
+        cause_effect = enum_result["cause_effect"]
+        enum_report = enum_result["report"]
+        compile_report["stages"].append(temporal_result["stage"])
+        compile_report["stages"].append(enum_result["stage"])
 
         schema_conf = 1.0
         confidence = global_confidence(route_conf, stop_conf, temporal_confidence, schema_conf)
@@ -667,9 +742,9 @@ class AlertCompiler:
             "evidence_units_used": len(evidence_units),
             "schema_repair_used": bool(
                 self.intent_parser.last_parse_report.get("repair_used")
-                or self.entity_selector.last_selection_report.get("repair_used")
-                or self.temporal_selector.last_resolution_report.get("repair_used")
-                or self.enum_resolver.last_resolution_report.get("repair_used")
+                or entity_selection_report.get("repair_used")
+                or temporal_report.get("repair_used")
+                or enum_report.get("repair_used")
                 or self.text_mode_resolver.last_resolution_report.get("repair_used")
                 or self.mercury_resolver.last_resolution_report.get("repair_used")
                 or self.output_builder.last_variants_report.get("repair_used")

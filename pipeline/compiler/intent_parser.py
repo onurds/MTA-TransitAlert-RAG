@@ -5,7 +5,7 @@ import traceback
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from .confidence import coerce_confidence
-from .models import IntentParseResult
+from .models import EntityMention, IntentParseResult
 from .utils import invoke_json_with_repair
 
 
@@ -31,9 +31,6 @@ class IntentParser:
         if not text:
             return IntentParseResult(alert_text=None, temporal_text=None)
 
-        heuristic_routes = self._extract_explicit_route_ids(text)
-        heuristic_stops = self._extract_explicit_stop_ids(text)
-
         if not self.ensure_llm():
             raise RuntimeError("LLM is required for intent parsing but is unavailable.")
 
@@ -41,14 +38,30 @@ class IntentParser:
         if parsed is None:
             parsed = self._llm_extract_intent(text, compact=True)
         if parsed is not None:
-            route_ids = self._merge_unique_tokens(parsed.explicit_route_ids, heuristic_routes)
-            stop_ids = self._merge_unique_tokens(parsed.explicit_stop_ids, heuristic_stops)
+            parsed = self._apply_replacement_route_policy(text, parsed)
+            route_ids = self.retriever.link_route_mentions(
+                mention.text for mention in parsed.affected_route_mentions
+            )
+            affected_stop_evidence = " ".join(
+                f"{mention.text} {mention.source_span}"
+                for mention in parsed.affected_stop_mentions
+            ).lower()
+            stop_ids = tuple(
+                stop_id
+                for stop_id in parsed.explicit_stop_ids
+                if stop_id.lower() in affected_stop_evidence
+            )
             return IntentParseResult(
                 alert_text=parsed.alert_text,
                 temporal_text=parsed.temporal_text,
                 explicit_route_ids=tuple(route_ids),
-                explicit_stop_ids=tuple(stop_ids),
+                explicit_stop_ids=stop_ids,
                 location_phrases=tuple(parsed.location_phrases),
+                affected_route_mentions=parsed.affected_route_mentions,
+                affected_stop_mentions=parsed.affected_stop_mentions,
+                alternative_route_mentions=parsed.alternative_route_mentions,
+                alternative_stop_mentions=parsed.alternative_stop_mentions,
+                corridor_endpoints=parsed.corridor_endpoints,
                 effect_hint=parsed.effect_hint,
                 cause_hint=parsed.cause_hint,
                 style_intent=parsed.style_intent,
@@ -72,7 +85,8 @@ class IntentParser:
                 "/no_think\n"
                 "Extract transit intent from operator text. Return strict JSON only with keys:\n"
                 "alert_text, temporal_text, explicit_route_ids, explicit_stop_ids, "
-                "location_phrases, effect_hint, cause_hint, style_intent, parse_confidence, "
+                "affected_route_mentions, affected_stop_mentions, alternative_route_mentions, "
+                "alternative_stop_mentions, corridor_endpoints, effect_hint, cause_hint, style_intent, parse_confidence, "
                 "alternative_service_text.\n"
                 "Rules: no prose, no markdown; use null or [] when absent. style_intent='moderate'.\n"
                 "Normalize markdown or emphasized text into plain text before extracting fields.\n"
@@ -81,9 +95,14 @@ class IntentParser:
                 "Treat operator authoring directives as control text, not rider text. Examples: "
                 "'timeframe is ...', 'dates will be ...', 'make sure to get it right'. Put the "
                 "underlying time phrase in temporal_text when relevant, and do not echo the directive.\n"
-                "Return clean location_phrases only from the PRIMARY AFFECTED SERVICE: concise physical "
-                "place phrases, no leading prepositions, no route names unless they are physical places, "
-                "and no trailing service/meta clauses. Do NOT include locations from alternative/shuttle/replacement service.\n"
+                "Do not leave affected_route_mentions empty when an affected route code/name is present. "
+                "Classify every service route mention as either affected_route or alternative_route.\n"
+                "Each mention item must be {text, source_span, role}. text must be copied from source_span, "
+                "and source_span must be copied verbatim from INPUT. Never infer an unmentioned name.\n"
+                "affected_stop_mentions and corridor_endpoints must contain only primary affected-service places. "
+                "Do NOT include locations from alternative/shuttle/replacement service there.\n"
+                "Examples: 'downtown 4 local' and 'Coney Island-bound F' are affected route mentions; "
+                "'Take the D instead' is alternative route D.\n"
                 "alternative_service_text: the portion of the input describing what riders should do "
                 "INSTEAD (shuttles, transfer routes, replacement service). Return null if none.\n"
                 f"INPUT:\n{instruction}"
@@ -98,7 +117,11 @@ class IntentParser:
                 "temporal_text (string|null): raw time/recurrence phrase(s).\n"
                 "explicit_route_ids (array of strings): route IDs explicitly present in input.\n"
                 "explicit_stop_ids (array of strings): stop IDs explicitly present in input.\n"
-                "location_phrases (array of strings): clean place phrases from the PRIMARY AFFECTED SERVICE only that can help stop grounding.\n"
+                "affected_route_mentions (array): primary affected route mentions as {text, source_span, role='affected_route'}.\n"
+                "affected_stop_mentions (array): primary affected stop/place mentions as {text, source_span, role='affected_stop'}.\n"
+                "alternative_route_mentions (array): alternative/replacement route mentions as {text, source_span, role='alternative_route'}.\n"
+                "alternative_stop_mentions (array): alternative/replacement stop mentions as {text, source_span, role='alternative_stop'}.\n"
+                "corridor_endpoints (array): ordered affected endpoints as {text, source_span, role='corridor_endpoint'}; return at most two.\n"
                 "effect_hint (string|null): GTFS effect guess if explicit in text.\n"
                 "cause_hint (string|null): GTFS cause guess if explicit in text.\n"
                 "style_intent (string): use 'moderate'.\n"
@@ -119,10 +142,14 @@ class IntentParser:
                 "- Do not copy operator authoring directives into alert_text or location_phrases. "
                 "Examples: 'timeframe is ...', 'dates will be ...', 'make sure to get it right'. "
                 "Use their actual time content only in temporal_text when relevant.\n"
-                "- location_phrases must be concise physical locations from the PRIMARY AFFECTED SERVICE only, "
-                "with no leading prepositions like 'at', 'on', or 'near', and no trailing rider-guidance clauses.\n"
-                "- Exclude locations from alternative/shuttle/replacement service from location_phrases. "
-                "Those belong in alternative_service_text instead.\n\n"
+                "- Every mention text must occur inside its source_span, and every source_span must occur verbatim in the operator input.\n"
+                "- Copy concise names, not whole sentences. Examples: route='Montauk Branch', stop='Babylon'.\n"
+                "- Classify 'No F between Church Av and Coney Island-Stillwell Av. Take the D instead.' as "
+                "affected route F, affected stops/corridor endpoints Church Av and Coney Island-Stillwell Av, "
+                "and alternative route D.\n"
+                "- Classify 'Buses replace trains between Babylon and Montauk' with affected stop mentions "
+                "Babylon and Montauk and those same two corridor endpoints; do not invent a branch name.\n"
+                "- Exclude alternative/shuttle/replacement locations from affected_stop_mentions and corridor_endpoints.\n\n"
                 f"Operator input:\n{instruction}"
             )
 
@@ -136,7 +163,11 @@ class IntentParser:
                     "temporal_text",
                     "explicit_route_ids",
                     "explicit_stop_ids",
-                    "location_phrases",
+                    "affected_route_mentions",
+                    "affected_stop_mentions",
+                    "alternative_route_mentions",
+                    "alternative_stop_mentions",
+                    "corridor_endpoints",
                     "effect_hint",
                     "cause_hint",
                     "style_intent",
@@ -158,13 +189,42 @@ class IntentParser:
 
             route_ids: List[str] = []
             if isinstance(parsed.get("explicit_route_ids"), list):
-                route_ids = [str(x).strip() for x in parsed.get("explicit_route_ids", []) if str(x).strip()]
+                route_ids = self._ground_explicit_tokens(
+                    parsed.get("explicit_route_ids"),
+                    instruction,
+                )
             stop_ids: List[str] = []
             if isinstance(parsed.get("explicit_stop_ids"), list):
-                stop_ids = [str(x).strip() for x in parsed.get("explicit_stop_ids", []) if str(x).strip()]
-            locations: List[str] = []
-            if isinstance(parsed.get("location_phrases"), list):
-                locations = [str(x).strip() for x in parsed.get("location_phrases", []) if str(x).strip()]
+                stop_ids = self._ground_explicit_tokens(
+                    parsed.get("explicit_stop_ids"),
+                    instruction,
+                )
+            affected_routes = self._ground_mentions(
+                parsed.get("affected_route_mentions"),
+                instruction,
+                expected_role="affected_route",
+            )
+            affected_stops = self._ground_mentions(
+                parsed.get("affected_stop_mentions"),
+                instruction,
+                expected_role="affected_stop",
+            )
+            alternative_routes = self._ground_mentions(
+                parsed.get("alternative_route_mentions"),
+                instruction,
+                expected_role="alternative_route",
+            )
+            alternative_stops = self._ground_mentions(
+                parsed.get("alternative_stop_mentions"),
+                instruction,
+                expected_role="alternative_stop",
+            )
+            corridor_endpoints = self._ground_mentions(
+                parsed.get("corridor_endpoints"),
+                instruction,
+                expected_role="corridor_endpoint",
+            )[:2]
+            locations = self._merge_mention_texts(corridor_endpoints, affected_stops)
 
             effect_hint = str(parsed.get("effect_hint") or "").strip().upper() or None
             cause_hint = str(parsed.get("cause_hint") or "").strip().upper() or None
@@ -174,7 +234,7 @@ class IntentParser:
             if alt_service_text and alt_service_text.lower() in {"null", "none"}:
                 alt_service_text = None
 
-            if not alert_text and not temporal_text and not route_ids and not stop_ids and not locations:
+            if not alert_text and not temporal_text and not route_ids and not stop_ids and not locations and not affected_routes:
                 return None
 
             self.last_parse_report = {
@@ -187,6 +247,11 @@ class IntentParser:
                 explicit_route_ids=tuple(route_ids),
                 explicit_stop_ids=tuple(stop_ids),
                 location_phrases=tuple(locations),
+                affected_route_mentions=tuple(affected_routes),
+                affected_stop_mentions=tuple(affected_stops),
+                alternative_route_mentions=tuple(alternative_routes),
+                alternative_stop_mentions=tuple(alternative_stops),
+                corridor_endpoints=tuple(corridor_endpoints),
                 effect_hint=effect_hint,
                 cause_hint=cause_hint,
                 style_intent=style_intent,
@@ -197,6 +262,125 @@ class IntentParser:
             print(f"[DEBUG] Error in _llm_extract_intent: {e}")
             traceback.print_exc()
             return None
+
+    @staticmethod
+    def _ground_mentions(
+        raw_mentions: Any,
+        instruction: str,
+        expected_role: str,
+    ) -> List[EntityMention]:
+        if not isinstance(raw_mentions, list):
+            return []
+        normalized_source = IntentParser._normalize_evidence_text(instruction)
+        out: List[EntityMention] = []
+        seen = set()
+        for raw in raw_mentions:
+            if not isinstance(raw, dict):
+                continue
+            text = " ".join(str(raw.get("text") or "").split()).strip()
+            source_span = str(raw.get("source_span") or "").strip()
+            role = str(raw.get("role") or expected_role).strip().lower()
+            if not text or not source_span or role != expected_role:
+                continue
+            normalized_span = IntentParser._normalize_evidence_text(source_span)
+            normalized_text = IntentParser._normalize_evidence_text(text)
+            if not normalized_span or normalized_span not in normalized_source:
+                continue
+            if not normalized_text or normalized_text not in normalized_span:
+                continue
+            key = (text.lower(), source_span.lower(), role)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(EntityMention(text=text, source_span=source_span, role=role))
+        return out
+
+    @staticmethod
+    def _normalize_evidence_text(value: str) -> str:
+        normalized = re.sub(r"[^a-z0-9]+", " ", str(value or "").lower())
+        return " ".join(normalized.split())
+
+    @staticmethod
+    def _merge_mention_texts(*groups: Sequence[EntityMention]) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for group in groups:
+            for mention in group:
+                key = mention.text.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(mention.text)
+        return out
+
+    @staticmethod
+    def _apply_replacement_route_policy(
+        instruction: str,
+        parsed: IntentParseResult,
+    ) -> IntentParseResult:
+        match = re.search(
+            r"\b([A-Z0-9][A-Z0-9+-]*(?:-SBS)?)\s+replaces\s+([A-Z0-9][A-Z0-9+-]*(?:-SBS)?)\s+service\b",
+            instruction,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return parsed
+
+        replacement = match.group(1)
+        original = match.group(2)
+        replacement_mention = EntityMention(
+            text=replacement,
+            source_span=replacement,
+            role="affected_route",
+        )
+        original_mention = EntityMention(
+            text=original,
+            source_span=original,
+            role="alternative_route",
+        )
+        affected = (replacement_mention,) + tuple(
+            mention
+            for mention in parsed.affected_route_mentions
+            if mention.text.strip().lower() != original.lower()
+        )
+        alternatives = (original_mention,) + tuple(
+            mention
+            for mention in parsed.alternative_route_mentions
+            if mention.text.strip().lower() != replacement.lower()
+        )
+        return IntentParseResult(
+            alert_text=parsed.alert_text,
+            temporal_text=parsed.temporal_text,
+            explicit_route_ids=parsed.explicit_route_ids,
+            explicit_stop_ids=parsed.explicit_stop_ids,
+            location_phrases=parsed.location_phrases,
+            affected_route_mentions=affected,
+            affected_stop_mentions=parsed.affected_stop_mentions,
+            alternative_route_mentions=alternatives,
+            alternative_stop_mentions=parsed.alternative_stop_mentions,
+            corridor_endpoints=parsed.corridor_endpoints,
+            effect_hint=parsed.effect_hint,
+            cause_hint=parsed.cause_hint,
+            style_intent=parsed.style_intent,
+            parse_confidence=parsed.parse_confidence,
+            alternative_service_text=parsed.alternative_service_text,
+        )
+
+    @staticmethod
+    def _ground_explicit_tokens(raw_tokens: Any, instruction: str) -> List[str]:
+        if not isinstance(raw_tokens, list):
+            return []
+        source_lower = instruction.lower()
+        out: List[str] = []
+        seen = set()
+        for raw in raw_tokens:
+            token = str(raw or "").strip()
+            key = token.lower()
+            if not token or key in seen or key not in source_lower:
+                continue
+            seen.add(key)
+            out.append(token)
+        return out
 
     def _extract_explicit_stop_ids(self, text: str) -> List[str]:
         ids: List[str] = []

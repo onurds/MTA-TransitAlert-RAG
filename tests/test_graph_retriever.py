@@ -240,6 +240,29 @@ def test_lirr_montauk_branch_is_inferred_from_station_pair():
     assert result["route_ids"] == ["5"]
 
 
+def test_lirr_montauk_branch_is_inferred_from_llm_mentions_without_text_detection():
+    retriever = _build_retriever()
+    route_ids = retriever.infer_commuter_route_ids_from_mentions(["Babylon", "Montauk"])
+    result = retriever.retrieve_affected_entities(
+        "Buses replace trains between Babylon and Montauk.",
+        route_ids_override=route_ids,
+        location_hints_override=["Babylon", "Montauk"],
+        primary_location_hints_override=["Babylon", "Montauk"],
+        allow_text_route_detection=False,
+        allow_text_location_detection=False,
+    )
+
+    assert route_ids == ["5"]
+    assert result["status"] == "success"
+    assert result["route_ids"] == ["5"]
+
+
+def test_generic_commuter_words_do_not_create_commuter_context():
+    retriever = _build_retriever()
+
+    assert not retriever._has_commuter_rail_context("Check TrainTime for branch or line information.")
+
+
 def test_lirr_greenport_service_is_inferred_from_station_pair():
     retriever = _build_retriever()
     text = "Buses replace trains between Ronkonkoma and Greenport."
@@ -319,6 +342,29 @@ def test_mnr_line_aliases_resolve_to_commuter_routes():
         for e in new_haven["informed_entities"]
         if not e.get("stop_id")
     ]
+
+
+def test_llm_route_mention_linking_preserves_commuter_agency():
+    retriever = _build_retriever()
+
+    assert retriever.link_route_mention_entities(["Harlem Line"]) == [
+        {"agency_id": "MNR", "route_id": "2"}
+    ]
+    assert retriever.link_route_mention_entities(["Montauk Branch"]) == [
+        {"agency_id": "LI", "route_id": "5"}
+    ]
+
+
+def test_llm_route_mention_linking_normalizes_descriptive_subway_spans():
+    retriever = _build_retriever()
+
+    assert retriever.link_route_mentions(["downtown 4 local"]) == ["4"]
+    assert retriever.link_route_mentions(["Coney Island-bound F", "Church Av-bound G"]) == ["F", "G"]
+    assert retriever.link_route_mention_entities(["downtown 4 local"]) == [
+        {"agency_id": "MTASBWY", "route_id": "4"}
+    ]
+    assert retriever.link_route_mentions(["take a train"]) == []
+    assert retriever.link_route_mentions(["8:57am train from Poughkeepsie to Grand Central"]) == []
 
 
 def test_explicit_subway_numeric_context_still_prefers_subway_route():

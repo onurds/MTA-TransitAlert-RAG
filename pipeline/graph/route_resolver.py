@@ -107,10 +107,6 @@ class RouteResolverMixin:
             " metro-north ",
             " metro north ",
             " mnr ",
-            " train time ",
-            " traintime ",
-            " branch ",
-            " line ",
             " penn station ",
             " grand central ",
             " jamaica ",
@@ -202,6 +198,73 @@ class RouteResolverMixin:
             if len(out) >= 3:
                 break
         return out
+
+    def infer_commuter_route_ids_from_mentions(
+        self,
+        location_mentions: Sequence[str],
+    ) -> List[str]:
+        normalized_mentions = {
+            self._normalize_commuter_match_text(mention)
+            for mention in location_mentions or []
+            if self._normalize_commuter_match_text(mention)
+        }
+        if len(normalized_mentions) < 2:
+            return []
+
+        city_terminal_matches = self._matched_commuter_mentions_for_route(
+            route_id="12",
+            route_node_id="gtfslirr_12",
+            normalized_mentions=normalized_mentions,
+        )
+        if (
+            len(city_terminal_matches) >= 2
+            and city_terminal_matches.issubset(self.CITY_TERMINAL_STOP_NAMES)
+        ):
+            return ["12"]
+
+        scored: List[Tuple[int, int, str]] = []
+        for route_id, route_nodes in self.route_nodes_by_id.items():
+            for route_node_id in route_nodes:
+                if self.route_agency_by_node.get(route_node_id, "") not in self.COMMUTER_AGENCIES:
+                    continue
+                matched_names = self._matched_commuter_mentions_for_route(
+                    route_id=route_id,
+                    route_node_id=route_node_id,
+                    normalized_mentions=normalized_mentions,
+                )
+                if len(matched_names) < 2:
+                    continue
+                if matched_names.issubset(self.CITY_TERMINAL_STOP_NAMES) and route_id != "12":
+                    continue
+                route_stop_count = len(self._route_neighborhood_stops(route_node_id))
+                scored.append((len(matched_names), -route_stop_count, route_id))
+
+        scored.sort(reverse=True)
+        out: List[str] = []
+        seen = set()
+        for _matches, _size_score, route_id in scored:
+            if route_id in seen:
+                continue
+            seen.add(route_id)
+            out.append(route_id)
+            if len(out) >= 3:
+                break
+        return out
+
+    def _matched_commuter_mentions_for_route(
+        self,
+        route_id: str,
+        route_node_id: str,
+        normalized_mentions: Set[str],
+    ) -> Set[str]:
+        if route_node_id not in self.route_nodes_by_id.get(route_id, []):
+            return set()
+        route_stop_names = {
+            self._normalize_commuter_match_text(stop_name)
+            for _stop_node, stop_name in self._route_neighborhood_stops(route_node_id)
+            if self._normalize_commuter_match_text(stop_name)
+        }
+        return normalized_mentions & route_stop_names
 
     def _matched_commuter_stop_names_for_route(
         self,

@@ -22,6 +22,7 @@ class GraphIndexMixin:
     route_long_name_by_id: Dict[str, str]
     route_short_name_by_id: Dict[str, str]
     route_phrase_to_id: Dict[str, str]
+    route_phrase_to_agency: Dict[str, str]
     route_code_aliases: Dict[str, str]
     route_display_name_by_id: Dict[str, str]
     route_patterns_by_node: Dict[str, List[RoutePattern]]
@@ -42,6 +43,7 @@ class GraphIndexMixin:
         self.route_long_name_by_id.clear()
         self.route_short_name_by_id.clear()
         self.route_phrase_to_id.clear()
+        self.route_phrase_to_agency.clear()
         self.route_display_name_by_id.clear()
         self.route_patterns_by_node = {}
         self.route_code_aliases = {"SIR": "SI"}
@@ -53,6 +55,9 @@ class GraphIndexMixin:
 
             route_id = self.to_public_route_id(node)
             self.route_nodes_by_id.setdefault(route_id, []).append(node)
+            namespace = self._namespace_from_node(node)
+            agency_id = AGENCY_ID_BY_GTFS_NAMESPACE.get(namespace, "MTA NYCT")
+            self.route_agency_by_node[node] = agency_id
             short_name = str(attrs.get("short_name", "") or "").strip()
             long_name = str(attrs.get("long_name", "") or "").strip()
             if short_name:
@@ -67,12 +72,10 @@ class GraphIndexMixin:
                 self._register_route_phrase_alias(
                     phrase=phrase,
                     route_id=route_id,
+                    agency_id=agency_id,
                     stop_name_phrases=stop_name_phrases,
                 )
 
-            namespace = self._namespace_from_node(node)
-            agency_id = AGENCY_ID_BY_GTFS_NAMESPACE.get(namespace, "MTA NYCT")
-            self.route_agency_by_node[node] = agency_id
             self.route_patterns_by_node[node] = self._coerce_route_patterns(
                 attrs.get("stop_patterns")
             )
@@ -95,6 +98,7 @@ class GraphIndexMixin:
                         self._register_route_phrase_alias(
                             phrase=alias,
                             route_id=route_id,
+                            agency_id=agency_id,
                             stop_name_phrases=stop_name_phrases,
                         )
 
@@ -178,6 +182,7 @@ class GraphIndexMixin:
         self,
         phrase: str,
         route_id: str,
+        agency_id: str,
         stop_name_phrases: set[str],
     ) -> None:
         norm = self._normalize_route_phrase(phrase)
@@ -199,6 +204,7 @@ class GraphIndexMixin:
         if norm in stop_name_phrases and not is_route_specific:
             return
         self.route_phrase_to_id.setdefault(norm, route_id)
+        self.route_phrase_to_agency.setdefault(norm, agency_id)
 
     def _is_route_specific_phrase(self, norm_phrase: str, route_id: str) -> bool:
         words = set(norm_phrase.split())
@@ -331,6 +337,106 @@ class GraphIndexMixin:
         if not norm:
             return False
         return norm in self.route_phrase_to_id
+
+    def link_route_mentions(self, mentions: Sequence[str]) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for mention in mentions or []:
+            for route_id, _agency_id in self._route_links_from_mention(str(mention or "")):
+                if route_id in seen:
+                    continue
+                seen.add(route_id)
+                out.append(route_id)
+        return out
+
+    def link_route_mention_entities(self, mentions: Sequence[str]) -> List[Dict[str, str]]:
+        out: List[Dict[str, str]] = []
+        seen = set()
+        for mention in mentions or []:
+            for route_id, agency_id in self._route_links_from_mention(str(mention or "")):
+                key = (agency_id, route_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({"agency_id": agency_id, "route_id": route_id})
+        return out
+
+    def _route_links_from_mention(self, mention: str) -> List[tuple[str, str]]:
+        raw = str(mention or "").strip()
+        if not raw:
+            return []
+
+        route_id = self.normalize_route_id(raw)
+        if route_id in self.route_nodes_by_id:
+            norm = self._normalize_route_phrase(raw)
+            agency_id = self.route_phrase_to_agency.get(norm) or self.agency_for_route_id(route_id)
+            return [(route_id, agency_id)]
+
+        out: List[tuple[str, str]] = []
+        seen = set()
+        for token in self._route_code_tokens_from_mention(raw):
+            route_id = self.normalize_route_id(token)
+            if route_id not in self.route_nodes_by_id or route_id in seen:
+                continue
+            seen.add(route_id)
+            out.append((route_id, self.agency_for_route_id(route_id)))
+        return out
+
+    def _route_code_tokens_from_mention(self, mention: str) -> List[str]:
+        raw = str(mention or "")
+        if not raw:
+            return []
+
+        # Only inspect a span the LLM already classified as an affected route
+        # mention. This recovers route codes inside descriptive spans such as
+        # "downtown 4 local" without scanning unrelated alert text.
+        pattern = re.compile(
+            r"\[[A-Za-z0-9+ -]+\]"
+            r"|[A-Za-z]{1,3}\d+[A-Za-z]?(?:[- ]?SBS)?"
+            r"|\b\d{1,2}\b"
+            r"|\b[A-Z]\b"
+        )
+        tokens: List[str] = []
+        seen = set()
+        for match in pattern.finditer(raw):
+            token = match.group(0).strip()
+            if not self._route_code_token_allowed_in_mention(raw, token, match.start(), match.end()):
+                continue
+            norm = self._normalize_route_token(token)
+            if not norm or norm in seen:
+                continue
+            seen.add(norm)
+            tokens.append(token)
+        return tokens
+
+    @staticmethod
+    def _route_code_token_allowed_in_mention(
+        mention: str,
+        token: str,
+        start: int = -1,
+        end: int = -1,
+    ) -> bool:
+        bare = str(token or "").strip().strip("[](){}.,;:")
+        if not bare:
+            return False
+        if re.search(r"[A-Za-z]{1,3}\d", bare):
+            return True
+        if re.fullmatch(r"[A-Z]", bare):
+            return True
+        if re.fullmatch(r"\d{1,2}", bare):
+            prev_char = mention[start - 1] if start > 0 else ""
+            next_char = mention[end] if 0 <= end < len(mention) else ""
+            following = mention[end : end + 4].lower() if end >= 0 else ""
+            if prev_char == ":" or next_char == ":" or re.match(r"\s*(am|pm)\b", following):
+                return False
+            return bool(
+                re.search(
+                    r"\b(train|trains|service|line|local|express|uptown|downtown|bound)\b",
+                    mention,
+                    flags=re.IGNORECASE,
+                )
+            )
+        return bool(token.strip().startswith("[") and token.strip().endswith("]"))
 
     @staticmethod
     def _route_phrase_position_with_context(hay: str, phrase: str) -> int:

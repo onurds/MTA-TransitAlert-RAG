@@ -65,12 +65,24 @@ class CompileRequest(BaseModel):
 
 
 @dataclass(frozen=True)
+class EntityMention:
+    text: str
+    source_span: str
+    role: str
+
+
+@dataclass(frozen=True)
 class IntentParseResult:
     alert_text: Optional[str]
     temporal_text: Optional[str]
     explicit_route_ids: Tuple[str, ...] = field(default_factory=tuple)
     explicit_stop_ids: Tuple[str, ...] = field(default_factory=tuple)
     location_phrases: Tuple[str, ...] = field(default_factory=tuple)
+    affected_route_mentions: Tuple[EntityMention, ...] = field(default_factory=tuple)
+    affected_stop_mentions: Tuple[EntityMention, ...] = field(default_factory=tuple)
+    alternative_route_mentions: Tuple[EntityMention, ...] = field(default_factory=tuple)
+    alternative_stop_mentions: Tuple[EntityMention, ...] = field(default_factory=tuple)
+    corridor_endpoints: Tuple[EntityMention, ...] = field(default_factory=tuple)
     effect_hint: Optional[str] = None
     cause_hint: Optional[str] = None
     style_intent: Optional[str] = None

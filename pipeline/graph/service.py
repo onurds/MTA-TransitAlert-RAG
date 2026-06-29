@@ -37,6 +37,7 @@ class GraphRetriever(
         self.route_long_name_by_id: Dict[str, str] = {}
         self.route_short_name_by_id: Dict[str, str] = {}
         self.route_phrase_to_id: Dict[str, str] = {}
+        self.route_phrase_to_agency: Dict[str, str] = {}
         self.route_code_aliases: Dict[str, str] = {}
         self.route_display_name_by_id: Dict[str, str] = {}
         self.stop_nodes_by_id: Dict[str, List[str]] = {}
@@ -58,6 +59,9 @@ class GraphRetriever(
         alternative_hints_override: Optional[str] = None,
         max_stop_candidates: int = 20,
         effect_hint: Optional[str] = None,
+        allow_text_route_detection: bool = True,
+        allow_text_location_detection: bool = True,
+        primary_location_hints_override: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
         text = (alert_text or "").strip()
         if not text:
@@ -98,20 +102,22 @@ class GraphRetriever(
             route_ids = self.validate_route_ids(route_ids_override)
             if seed_entities:
                 route_ids = self._dedupe_route_ids(route_ids + self._routes_from_seed(seed_entities))
-        else:
+        elif allow_text_route_detection:
             route_ids = self._extract_route_ids(
                 text,
                 seed_entities=seed_entities,
                 affected_segments=affected_segments,
                 alternative_segments=alternative_segments,
             )
+        else:
+            route_ids = []
 
         if not route_ids:
             location_hints = self._merge_location_hints(
                 [],
                 location_hints_override,
             ) if location_hints_override else self._merge_location_hints(
-                self._extract_location_hints(text),
+                self._extract_location_hints(text) if allow_text_location_detection else [],
                 None,
             )
             return {
@@ -138,12 +144,20 @@ class GraphRetriever(
             [],
             location_hints_override,
         ) if location_hints_override else self._merge_location_hints(
-            self._extract_location_hints(text),
+            self._extract_location_hints(text) if allow_text_location_detection else [],
             None,
         )
-        primary_location_hints = self._extract_primary_location_hints(
-            text,
-            affected_segments=affected_segments,
+        primary_location_hints = (
+            self._merge_location_hints([], primary_location_hints_override)
+            if primary_location_hints_override
+            else (
+                self._extract_primary_location_hints(
+                    text,
+                    affected_segments=affected_segments,
+                )
+                if allow_text_location_detection
+                else []
+            )
         )
         secondary_location_hints = [
             hint for hint in location_hints
